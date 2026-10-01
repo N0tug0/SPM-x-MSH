@@ -157,8 +157,13 @@
 
 <script>
 /* ================= CONFIG ================= */
+/* "sources" : sets Scryfall fusionnés dans la même collection.
+   - Le premier est le set principal (numéros de carte inchangés → ta collection existante est conservée).
+   - Les suivants sont préfixés (ex. MAR-12, SPE-3) pour éviter les collisions de numéros.
+   - keepAll : true = on garde aussi les versions showcase / borderless / full art, etc. */
 const SETS = [
-  { code: "spm", label: "Spider-Man",          short: "Spider-Man", emoji: "🕷️", color: "#dc2626" },
+  { code: "spm", label: "Spider-Man",          short: "Spider-Man", emoji: "🕷️", color: "#dc2626",
+    sources: [ { code: "spm" }, { code: "mar", keepAll: true }, { code: "spe", force: [21, 26] } ] },
   { code: "msh", label: "Marvel Super Heroes", short: "Marvel SH",  emoji: "🦸", color: "#4f46e5" }
 ];
 const BUILDER_COLOR = "#d97706";
@@ -175,11 +180,12 @@ const MANA = [
 ];
 const COLOR_ORDER = ['W', 'U', 'B', 'R', 'G'];
 const manaInfo = k => MANA.find(m => m.k === k);
+const srcsOf = cfg => cfg.sources || [{ code: cfg.code }];
 /* ========================================== */
 
 const DECK_SIZE = 100;
 const K = {
-  cards:    c => `mtg_${c}_cards_v4`,          // v4 : contient les "tags" de mana (couleurs multiples)
+  cards:    c => `mtg_${c}_cards_v5`,          // v5 : sets fusionnés (SPM + MAR + SPE)
   owned:    c => `mtg_${c}_owned_v1`,
   oldDeck1: c => `mtg_${c}_deck_v1`,
   oldDecks: c => `mtg_${c}_decks_v1`,
@@ -283,10 +289,12 @@ const touch = () => { cur().updated = Date.now(); };
 const cardOf  = id => state[codeOf(id)]?.map.get(numOf(id));
 const countOf = id => state[codeOf(id)]?.owned[numOf(id)] || 0;
 const allCards = () => SETS.flatMap(s => state[s.code].cards);
-const cmpCards = (a, b) => (setIdx(a.code) - setIdx(b.code)) || (a.num - b.num) || a.n.localeCompare(b.n, undefined, { numeric: true });
+const cmpNum = (a, b) => (a.num - b.num) || a.n.localeCompare(b.n, undefined, { numeric: true });
+const cmpCards = (a, b) => (setIdx(a.code) - setIdx(b.code)) || ((a.so || 0) - (b.so || 0)) || cmpNum(a, b);
 const inDeck = id => cur().deck.includes(id);
 const totalOf = d => d.deck.length + (d.commander ? 1 : 0);
 const totalDeck = () => totalOf(cur());
+const matchNum = (c, q) => c.n.toLowerCase() === q;
 
 /* ---------- Filtre mana multi-sélection ----------
    "all" (ET) : la carte doit contenir TOUS les types choisis (ex. 5 couleurs → seulement les cartes 5 couleurs)
@@ -386,17 +394,20 @@ function tagsOf(c) {
   return cols.length ? cols : ['C'];
 }
 
-function normalize(c) {
+// prefix : '' pour le set principal, "MAR-" / "SPE-" pour les sets fusionnés (évite les collisions de numéros)
+function normalize(c, prefix = '', so = 0) {
   const iu = c.image_uris || c.card_faces?.[0]?.image_uris || {};
   const faceTypes = (c.card_faces || []).map(f => `${f.type_line || ''} ${f.printed_type_line || ''}`).join(' ');
   const fullTypeStr = `${c.type_line || ''} ${c.printed_type_line || ''} ${faceTypes}`;
   const isLegendary = /legendary|légendaire|legend/i.test(fullTypeStr);
   const isCreature = /creature|créature/i.test(fullTypeStr);
   const isBasic = /basic|base/i.test(fullTypeStr) && /land|terrain/i.test(fullTypeStr);
+  const num = parseInt(c.collector_number, 10);
 
   return {
-    n: c.collector_number,
-    num: parseInt(c.collector_number, 10),
+    n: prefix + c.collector_number,
+    num: Number.isNaN(num) ? 99999 : num,
+    so,
     name: c.printed_name || c.name,
     img: iu.normal || '',
     big: iu.large || iu.normal || '',
@@ -415,7 +426,7 @@ function setCards(st, list) {
     c.code = st.cfg.code; c.id = `${c.code}:${c.n}`;
     if (!Array.isArray(c.tags) || !c.tags.length) c.tags = ['C'];
   });
-  list.sort((a, b) => (a.num - b.num) || a.n.localeCompare(b.n, undefined, { numeric: true }));
+  list.sort((a, b) => ((a.so || 0) - (b.so || 0)) || cmpNum(a, b));
   st.cards = list;
   st.map = new Map(list.map(c => [c.n, c]));
 }
@@ -426,18 +437,33 @@ async function loadSet(code) {
   st.loading = true; st.error = false;
   render();
   try {
-    const [en, fr] = await Promise.all([
-      fetchAll(`set:${code} lang:en`),
-      fetchAll(`set:${code} lang:fr`)
-    ]);
-    // Les couleurs sont prises sur la version EN (toujours complète), nom/image sur la FR si dispo
-    const enTags = new Map(en.map(c => [c.collector_number, tagsOf(c)]));
     const map = new Map();
-    [...en, ...fr].filter(isV1).forEach(c => {
-      const n = normalize(c);
-      if (enTags.has(c.collector_number)) n.tags = enTags.get(c.collector_number);
-      map.set(c.collector_number, n);
-    });
+    const sources = srcsOf(st.cfg);
+    for (let i = 0; i < sources.length; i++) {
+      const src = sources[i];
+      const prefix = i === 0 ? '' : src.code.toUpperCase() + '-';
+      try {
+        const [en, fr] = await Promise.all([
+          fetchAll(`set:${src.code} lang:en`),
+          fetchAll(`set:${src.code} lang:fr`)
+        ]);
+        // Les couleurs sont prises sur la version EN (toujours complète), nom/image sur la FR si dispo
+        const enTags = new Map(en.map(c => [c.collector_number, tagsOf(c)]));
+        [...en, ...fr].filter(c => {
+          if (src.keepAll || isV1(c)) return true;
+          if (!src.force) return false;
+          const num = parseInt(c.collector_number, 10);
+          return num >= src.force[0] && num <= src.force[1];
+        }).forEach(c => {
+          const n = normalize(c, prefix, i);
+          if (enTags.has(c.collector_number)) n.tags = enTags.get(c.collector_number);
+          map.set(n.n, n);
+        });
+      } catch (err) {
+        // un set secondaire qui échoue ne doit pas bloquer le set principal
+        if (i === 0) throw err;
+      }
+    }
     const list = [...map.values()].filter(c => c.img);
     if (!list.length) throw new Error('Aucune carte');
     setCards(st, list);
@@ -547,7 +573,7 @@ function renderCmdModalList() {
     if (!c.legendary) return false;
     if (countOf(c.id) <= 0) return false;
     if (d.commander === c.id) return false;
-    if (q && !c.name.toLowerCase().includes(q) && c.n !== q) return false;
+    if (q && !c.name.toLowerCase().includes(q) && !matchNum(c, q)) return false;
     return true;
   });
 
@@ -626,7 +652,7 @@ function renderCollection() {
     if (filter === 'owned' && k < 1) return false;
     if (filter === 'missing' && k > 0) return false;
     if (filter === 'dupes' && k < 2) return false;
-    if (q && !(c.name.toLowerCase().includes(q) || c.n === q)) return false;
+    if (q && !(c.name.toLowerCase().includes(q) || matchNum(c, q))) return false;
     return true;
   });
   collectionIds = list.map(c => c.id);
@@ -636,8 +662,10 @@ function renderCollection() {
     return `
     <div class="tile relative rounded-lg overflow-hidden bg-slate-900 ${k === 0 ? 'opacity-40 grayscale' : ''} ${k > 1 ? 'ring-2 ring-amber-400' : k === 1 ? 'ring-1 ring-emerald-500' : ''}">
       <img data-zoom="${esc(c.id)}" src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy" class="w-full block">
-      <span class="absolute top-1 left-1 text-[10px] bg-black/70 px-1.5 rounded pointer-events-none">#${esc(c.n)}</span>
-      ${c.legendary ? `<span class="absolute top-1 left-9 text-[11px] bg-black/80 px-1 rounded pointer-events-none" title="Légendaire">👑</span>` : ''}
+      <div class="absolute top-1 left-1 flex items-center gap-1 pointer-events-none">
+        <span class="text-[10px] bg-black/70 px-1.5 rounded">#${esc(c.n)}</span>
+        ${c.legendary ? `<span class="text-[11px] bg-black/80 px-1 rounded" title="Légendaire">👑</span>` : ''}
+      </div>
       <span class="absolute bottom-10 left-1 flex gap-0.5 pointer-events-none">${dotsHTML(c.tags)}</span>
       ${k > 1 ? `<span class="absolute top-1 right-1 bg-amber-400 text-black text-xs font-extrabold rounded-full px-2 py-0.5 shadow pointer-events-none">×${k}</span>` : ''}
       ${k === 1 ? `<span class="absolute top-1 right-1 bg-emerald-500 text-black text-xs font-bold rounded-full w-5 h-5 grid place-items-center pointer-events-none">✓</span>` : ''}
@@ -731,7 +759,7 @@ function renderBuilder() {
     if (d.commander === c.id) return false;
     if (benchSet === 'leg' && !c.legendary) return false;
     if (benchSet !== 'all' && benchSet !== 'leg' && c.code !== benchSet) return false;
-    if (q && !(c.name.toLowerCase().includes(q) || c.n === q || (c.type && c.type.toLowerCase().includes(q)))) return false;
+    if (q && !(c.name.toLowerCase().includes(q) || matchNum(c, q) || (c.type && c.type.toLowerCase().includes(q)))) return false;
     return true;
   });
   $('#benchMana').innerHTML = manaTabsHTML(benchBase, 'data-bmana', 'data-bmmode', benchManaSel, benchManaMode, false);
@@ -828,7 +856,7 @@ function renderStats() {
 function render() {
   const isB = view === 'builder';
   document.documentElement.style.setProperty('--acc', isB ? BUILDER_COLOR : S.cfg.color);
-  $('#setName').textContent = isB ? 'Commander Builder · Mix' : `${S.cfg.label} · ${S.cfg.code.toUpperCase()}`;
+  $('#setName').textContent = isB ? 'Commander Builder · Mix' : `${S.cfg.label} · ${srcsOf(S.cfg).map(s => s.code.toUpperCase()).join(' + ')}`;
   document.title = isB ? 'Marvel MTG – Deck Builder' : `${S.cfg.label} MTG – Collection`;
   renderViewTabs();
   renderStats();
