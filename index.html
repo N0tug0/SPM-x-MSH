@@ -18,9 +18,10 @@
     0%, 100% { border-color: rgba(245, 158, 11, 0.4); }
     50% { border-color: rgba(245, 158, 11, 0.9); }
   }
-  .commander-slot-empty {
-    animation: pulseBorder 2.5s infinite ease-in-out;
-  }
+  .commander-slot-empty { animation: pulseBorder 2.5s infinite ease-in-out; }
+  .mana-chip { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; transition:transform .1s; }
+  .mana-chip:active { transform:scale(.94); }
+  .mana-dot { width:14px; height:14px; border-radius:9999px; border:1.5px solid rgba(0,0,0,.55); flex-shrink:0; box-shadow:inset 0 0 0 1px rgba(255,255,255,.25); }
 </style>
 </head>
 
@@ -39,13 +40,16 @@
 </header>
 
 <main class="p-3 max-w-6xl mx-auto">
-  <!-- Toast notification system (no alert) -->
   <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-slate-100 border border-slate-700 px-4 py-2 rounded-xl shadow-2xl text-xs sm:text-sm font-medium transition-all duration-300 opacity-0 pointer-events-none translate-y-3"></div>
 
   <div id="status" class="text-center text-slate-400 py-10"></div>
 
   <!-- VUE COLLECTION (une licence) -->
   <section id="view-collection" class="hidden">
+    <!-- Onglets de MANA -->
+    <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Trier par mana</div>
+    <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-1" id="manaTabs"></div>
+
     <div class="flex gap-2 overflow-x-auto no-scrollbar mb-2" id="filters"></div>
     <input id="search" type="search" placeholder="Rechercher une carte…"
       class="w-full mb-3 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-sm focus:outline-none focus:border-slate-400">
@@ -106,6 +110,7 @@
       <div class="text-[11px] text-slate-400">👑 = Définir en Commandant</div>
     </div>
     <div class="flex gap-2 overflow-x-auto no-scrollbar mb-2" id="benchFilters"></div>
+    <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-1" id="benchMana"></div>
     <input id="benchSearch" type="search" placeholder="Rechercher dans le bench (nom, #, légendaire…)…"
       class="w-full mb-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-sm focus:outline-none focus:border-slate-400">
     <div id="bench" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-1.5 p-2 rounded-lg bg-slate-900/50 min-h-[72px]"></div>
@@ -129,12 +134,10 @@
       <button data-close-cmdmodal class="w-8 h-8 rounded-full bg-slate-800 text-slate-300 text-sm grid place-items-center hover:bg-slate-700">✕</button>
     </div>
     <div class="p-2 border-b border-slate-800 bg-slate-900">
-      <input id="cmdSearch" type="search" placeholder="Filtrer les créatures légendaires..." 
+      <input id="cmdSearch" type="search" placeholder="Filtrer les créatures légendaires..."
         class="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-amber-400">
     </div>
-    <div id="cmdList" class="p-3 overflow-y-auto grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
-      <!-- Liste dynamique des créatures légendaires possédées -->
-    </div>
+    <div id="cmdList" class="p-3 overflow-y-auto grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5"></div>
     <div class="p-2.5 border-t border-slate-800 bg-slate-950/60 text-right">
       <button data-close-cmdmodal class="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-semibold">Fermer</button>
     </div>
@@ -159,11 +162,24 @@ const SETS = [
   { code: "msh", label: "Marvel Super Heroes", short: "Marvel SH",  emoji: "🦸", color: "#4f46e5" }
 ];
 const BUILDER_COLOR = "#d97706";
+
+// Onglets de mana (ordre d'affichage)
+const MANA = [
+  { k: 'W', label: 'Blanc',      bg: '#f5f0cf' },
+  { k: 'U', label: 'Bleu',       bg: '#2f7fd1' },
+  { k: 'B', label: 'Noir',       bg: '#3a3340' },
+  { k: 'R', label: 'Rouge',      bg: '#d63a2f' },
+  { k: 'G', label: 'Vert',       bg: '#2e9a5b' },
+  { k: 'M', label: 'Multicolore',bg: 'linear-gradient(135deg,#f5f0cf 0 25%,#2f7fd1 25% 50%,#d63a2f 50% 75%,#2e9a5b 75%)' },
+  { k: 'C', label: 'Incolore',   bg: '#a8adb5' },
+  { k: 'L', label: 'Terrains',   bg: '#8b6b4a' }
+];
+const manaInfo = k => MANA.find(m => m.k === k);
 /* ========================================== */
 
 const DECK_SIZE = 100;
 const K = {
-  cards:    c => `mtg_${c}_cards_v2`,
+  cards:    c => `mtg_${c}_cards_v3`,          // v3 : contient désormais les couleurs de mana
   owned:    c => `mtg_${c}_owned_v1`,
   oldDeck1: c => `mtg_${c}_deck_v1`,
   oldDecks: c => `mtg_${c}_decks_v1`,
@@ -255,9 +271,9 @@ const validViews = [...SETS.map(s => s.code), 'builder'];
 let view = load(K.last, SETS[0].code);
 if (!validViews.includes(view)) view = SETS[0].code;
 let S = state[view] || state[SETS[0].code];
-let filter = 'all', query = '';
-let benchSet = 'all', benchQuery = '', cmdSearchQuery = '';
-let zoomN = null, zoomList = [], builderIds = [];
+let filter = 'all', query = '', manaFilter = 'all';
+let benchSet = 'all', benchQuery = '', benchMana = 'all', cmdSearchQuery = '';
+let zoomN = null, zoomList = [], builderIds = [], collectionIds = [];
 
 const cur = () => decks.list.find(d => d.id === decks.active) || decks.list[0];
 const touch = () => { cur().updated = Date.now(); };
@@ -269,6 +285,7 @@ const cmpCards = (a, b) => (setIdx(a.code) - setIdx(b.code)) || (a.num - b.num) 
 const inDeck = id => cur().deck.includes(id);
 const totalOf = d => d.deck.length + (d.commander ? 1 : 0);
 const totalDeck = () => totalOf(cur());
+const manaKey = c => c.mana || 'C';
 
 function idStillValid(id) {
   const st = state[codeOf(id)];
@@ -343,15 +360,26 @@ const isV1 = c =>
   !c.full_art && !c.variation &&
   !/^\d+★$|[a-z]$/i.test(c.collector_number);
 
-// Normalisation avec détection robuste des cartes légendaires (FR et EN, double face comprise)
+// Détermine la catégorie de mana : W/U/B/R/G (mono), M (multicolore), C (incolore), L (terrain)
+function manaOf(c) {
+  const front = c.card_faces?.[0] || {};
+  const typeLine = c.type_line || front.type_line || '';
+  const isLand = /\bLand\b/i.test(typeLine.split('//')[0]);
+  if (isLand) return 'L';
+  const cols = (c.colors && c.colors.length ? c.colors
+             : (front.colors && front.colors.length ? front.colors : [])) || [];
+  // Cartes double-face : fusionne les couleurs des faces si le niveau carte est vide
+  const all = cols.length ? cols
+    : [...new Set((c.card_faces || []).flatMap(f => f.colors || []))];
+  if (all.length > 1) return 'M';
+  if (all.length === 1) return all[0];
+  return 'C';
+}
+
 function normalize(c) {
   const iu = c.image_uris || c.card_faces?.[0]?.image_uris || {};
-  
-  // Combine tous les types possibles en cas de carte double-face ou imprimée
   const faceTypes = (c.card_faces || []).map(f => `${f.type_line || ''} ${f.printed_type_line || ''}`).join(' ');
   const fullTypeStr = `${c.type_line || ''} ${c.printed_type_line || ''} ${faceTypes}`;
-  
-  // Détection multilingue insensible à la casse et aux accents
   const isLegendary = /legendary|légendaire|legend/i.test(fullTypeStr);
   const isCreature = /creature|créature/i.test(fullTypeStr);
   const isBasic = /basic|base/i.test(fullTypeStr) && /land|terrain/i.test(fullTypeStr);
@@ -367,12 +395,13 @@ function normalize(c) {
     isCreature: isCreature,
     isCommanderEligible: isLegendary && (isCreature || /planeswalker/i.test(fullTypeStr)),
     basic: isBasic,
+    mana: manaOf(c),
     lang: c.lang
   };
 }
 
 function setCards(st, list) {
-  list.forEach(c => { c.code = st.cfg.code; c.id = `${c.code}:${c.n}`; });
+  list.forEach(c => { c.code = st.cfg.code; c.id = `${c.code}:${c.n}`; c.mana = c.mana || 'C'; });
   list.sort((a, b) => (a.num - b.num) || a.n.localeCompare(b.n, undefined, { numeric: true }));
   st.cards = list;
   st.map = new Map(list.map(c => [c.n, c]));
@@ -388,8 +417,14 @@ async function loadSet(code) {
       fetchAll(`set:${code} lang:en`),
       fetchAll(`set:${code} lang:fr`)
     ]);
+    // Les infos de couleur sont prises sur la version EN (toujours complète), le nom/image sur la FR si dispo
+    const enMana = new Map(en.map(c => [c.collector_number, manaOf(c)]));
     const map = new Map();
-    [...en, ...fr].filter(isV1).forEach(c => map.set(c.collector_number, normalize(c)));
+    [...en, ...fr].filter(isV1).forEach(c => {
+      const n = normalize(c);
+      if (enMana.has(c.collector_number)) n.mana = enMana.get(c.collector_number);
+      map.set(c.collector_number, n);
+    });
     const list = [...map.values()].filter(c => c.img);
     if (!list.length) throw new Error('Aucune carte');
     setCards(st, list);
@@ -412,7 +447,7 @@ function switchView(v) {
   closeZoom();
   closeCmdModal();
   view = v;
-  if (state[v]) { S = state[v]; query = ''; $('#search').value = ''; filter = 'all'; }
+  if (state[v]) { S = state[v]; query = ''; $('#search').value = ''; filter = 'all'; manaFilter = 'all'; }
   persist(true);
   render();
   ensureLoaded();
@@ -434,7 +469,7 @@ function deckAction(act) {
     L.push(copy); decks.active = copy.id;
     showToast(`Deck dupliqué`);
   } else if (act === 'del') {
-    if (L.length === 1) { 
+    if (L.length === 1) {
       d.commander = null; d.deck = []; d.name = 'Deck 1'; touch();
       showToast(`Deck réinitialisé`);
     } else {
@@ -457,10 +492,7 @@ function setAsCommander(id) {
     return;
   }
 
-  // Si la carte était dans le deck normal, on l'en extrait
   d.deck = d.deck.filter(x => x !== id);
-
-  // L'ancien commandant est renvoyé au bench
   const prevCmd = d.commander ? cardOf(d.commander) : null;
   d.commander = id;
   touch();
@@ -468,17 +500,14 @@ function setAsCommander(id) {
   closeCmdModal();
   render();
 
-  if (prevCmd) {
-    showToast(`👑 ${c.name} désigné(e) comme Commandant (remplace ${prevCmd.name})`);
-  } else {
-    showToast(`👑 ${c.name} désigné(e) comme Commandant`);
-  }
+  showToast(prevCmd
+    ? `👑 ${c.name} désigné(e) comme Commandant (remplace ${prevCmd.name})`
+    : `👑 ${c.name} désigné(e) comme Commandant`);
 }
 
 function removeCommander() {
   const d = cur();
   if (!d.commander) return;
-  const c = cardOf(d.commander);
   d.commander = null;
   touch();
   persist();
@@ -487,8 +516,7 @@ function removeCommander() {
 }
 
 function openCmdModal() {
-  const modal = $('#cmdModal');
-  modal.classList.remove('hidden');
+  $('#cmdModal').classList.remove('hidden');
   $('#cmdSearch').value = '';
   cmdSearchQuery = '';
   renderCmdModalList();
@@ -501,8 +529,7 @@ function closeCmdModal() {
 function renderCmdModalList() {
   const d = cur();
   const q = cmdSearchQuery.trim().toLowerCase();
-  
-  // Cartes légendaires possédées (Bench + Deck)
+
   const legCards = allCards().filter(c => {
     if (!c.legendary) return false;
     if (countOf(c.id) <= 0) return false;
@@ -529,6 +556,31 @@ function renderCmdModalList() {
   `).join('');
 }
 
+/* ---------- Onglets de mana (réutilisés collection + bench) ---------- */
+// cards : liste de base à compter ; attr : data-attribut du bouton ; current : clé active ; ownedMode : affiche possédées/total
+function manaTabsHTML(cards, attr, current, ownedMode) {
+  const tot = {}, own = {};
+  cards.forEach(c => {
+    const k = manaKey(c);
+    tot[k] = (tot[k] || 0) + 1;
+    if (countOf(c.id) > 0) own[k] = (own[k] || 0) + 1;
+  });
+  const chip = (k, label, bg, count, ownedCount) => {
+    const on = current === k;
+    const empty = k !== 'all' && !count && !on;
+    const num = ownedMode && k !== 'all' ? `${ownedCount || 0}/${count || 0}` : `${count || 0}`;
+    return `<button ${attr}="${k}" class="mana-chip px-3 py-1.5 rounded-full text-xs font-semibold border ${
+      on ? 'bg-slate-100 text-slate-900 border-white shadow' : 'bg-slate-800 text-slate-300 border-slate-700'} ${empty ? 'opacity-40' : ''}">
+      ${bg ? `<span class="mana-dot" style="background:${bg}"></span>` : ''}
+      <span>${esc(label)}</span>
+      <span class="${on ? 'text-slate-600' : 'text-slate-500'} font-normal">${num}</span>
+    </button>`;
+  };
+  const sumOwned = Object.values(own).reduce((a, b) => a + b, 0);
+  return chip('all', 'Tous', null, cards.length, sumOwned) +
+    MANA.map(m => chip(m.k, m.label, m.bg, tot[m.k], own[m.k])).join('');
+}
+
 const FILTERS = [['all', 'Toutes'], ['owned', 'Possédées'], ['missing', 'Manquantes'], ['dupes', 'Doublons']];
 
 function renderFilters() {
@@ -538,22 +590,29 @@ function renderFilters() {
 }
 
 function renderCollection() {
+  $('#manaTabs').innerHTML = manaTabsHTML(S.cards, 'data-mana', manaFilter, true);
+
   const q = query.trim().toLowerCase();
   const list = S.cards.filter(c => {
     const k = countOf(c.id);
+    if (manaFilter !== 'all' && manaKey(c) !== manaFilter) return false;
     if (filter === 'owned' && k < 1) return false;
     if (filter === 'missing' && k > 0) return false;
     if (filter === 'dupes' && k < 2) return false;
     if (q && !(c.name.toLowerCase().includes(q) || c.n === q)) return false;
     return true;
   });
+  collectionIds = list.map(c => c.id);
+
   $('#grid').innerHTML = list.map(c => {
     const k = countOf(c.id);
+    const m = manaInfo(manaKey(c));
     return `
     <div class="tile relative rounded-lg overflow-hidden bg-slate-900 ${k === 0 ? 'opacity-40 grayscale' : ''} ${k > 1 ? 'ring-2 ring-amber-400' : k === 1 ? 'ring-1 ring-emerald-500' : ''}">
       <img data-zoom="${esc(c.id)}" src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy" class="w-full block">
       <span class="absolute top-1 left-1 text-[10px] bg-black/70 px-1.5 rounded pointer-events-none">#${esc(c.n)}</span>
       ${c.legendary ? `<span class="absolute top-1 left-9 text-[11px] bg-black/80 px-1 rounded pointer-events-none" title="Légendaire">👑</span>` : ''}
+      ${m ? `<span class="mana-dot absolute bottom-10 left-1 pointer-events-none" title="${esc(m.label)}" style="background:${m.bg}"></span>` : ''}
       ${k > 1 ? `<span class="absolute top-1 right-1 bg-amber-400 text-black text-xs font-extrabold rounded-full px-2 py-0.5 shadow pointer-events-none">×${k}</span>` : ''}
       ${k === 1 ? `<span class="absolute top-1 right-1 bg-emerald-500 text-black text-xs font-bold rounded-full w-5 h-5 grid place-items-center pointer-events-none">✓</span>` : ''}
       <div class="absolute bottom-0 inset-x-0 flex items-center justify-between bg-black/75 px-1 py-1">
@@ -596,7 +655,6 @@ function renderBuilder() {
   renderBenchFilters();
   const d = cur();
 
-  // RENDU DU COMMANDANT
   const cmd = d.commander && cardOf(d.commander);
   if (cmd) {
     $('#commander').innerHTML = `
@@ -618,7 +676,6 @@ function renderBuilder() {
     `;
   }
 
-  // JAUGE ET STATISTIQUES DU DECK
   const t = totalDeck();
   $('#deckName').textContent = d.name;
   $('#deckCount').innerHTML = `<span class="${t === DECK_SIZE ? 'text-emerald-400 font-extrabold' : t > DECK_SIZE ? 'text-rose-400 font-extrabold' : 'text-slate-100'}">${t}</span><span class="text-slate-500 font-normal"> / ${DECK_SIZE}</span>`;
@@ -635,16 +692,14 @@ function renderBuilder() {
   const mixCounts = SETS.map(s => `${s.emoji} ${mixIds.filter(id => codeOf(id) === s.code).length}`).join('  ·  ');
   $('#deckMix').innerHTML = `Mix: ${mixCounts} ${d.commander ? ` · 👑 1` : ' · ⚠️ Sans commandant'}`;
 
-  // CARTES DANS LE DECK
   $('#deckZone').innerHTML = deckCards.map(c => {
-    // Si la carte dans le deck est légendaire, on propose aussi de la passer en commandant d'un clic
     const cmdPromoteBtn = c.legendary ? `<button data-promote-cmd="${esc(c.id)}" title="Promouvoir en Commandant" class="absolute top-0.5 right-0.5 bg-amber-400 hover:bg-amber-300 text-black rounded-full w-5 h-5 text-[10px] shadow leading-none grid place-items-center z-10">👑</button>` : '';
     return mini(c, `data-remove="${esc(c.id)}" title="Cliquer pour retirer du deck"`, cmdPromoteBtn);
   }).join('') || `<p class="col-span-full text-center text-slate-500 text-xs py-4">Deck vide – clique sur des cartes du Bench pour constituer votre deck.</p>`;
 
-  // FILTRE BENCH
+  // Bench : base (sans filtre de mana) pour compter les onglets, puis filtre mana
   const q = benchQuery.trim().toLowerCase();
-  const bench = allCards().filter(c => {
+  const benchBase = allCards().filter(c => {
     if (countOf(c.id) <= 0) return false;
     if (inDeck(c.id)) return false;
     if (d.commander === c.id) return false;
@@ -653,11 +708,12 @@ function renderBuilder() {
     if (q && !(c.name.toLowerCase().includes(q) || c.n === q || (c.type && c.type.toLowerCase().includes(q)))) return false;
     return true;
   });
+  $('#benchMana').innerHTML = manaTabsHTML(benchBase, 'data-bmana', benchMana, false);
+  const bench = benchBase.filter(c => benchMana === 'all' || manaKey(c) === benchMana);
 
   $('#bench').innerHTML = bench.map(c => {
-    // Bouton couronne bien visible et doté de son propre dataset
-    const cmdBtn = c.legendary 
-      ? `<button data-cmd="${esc(c.id)}" title="Définir comme Commandant" class="absolute top-0.5 right-0.5 bg-amber-400 hover:bg-amber-300 active:scale-110 text-black font-bold rounded-full w-6 h-6 text-xs shadow-md leading-none grid place-items-center z-20">👑</button>` 
+    const cmdBtn = c.legendary
+      ? `<button data-cmd="${esc(c.id)}" title="Définir comme Commandant" class="absolute top-0.5 right-0.5 bg-amber-400 hover:bg-amber-300 active:scale-110 text-black font-bold rounded-full w-6 h-6 text-xs shadow-md leading-none grid place-items-center z-20">👑</button>`
       : '';
     const legRing = c.legendary ? 'ring-1 ring-amber-500/50' : '';
     return mini(c, `data-add="${esc(c.id)}" title="${c.legendary ? 'Cliquer pour ajouter au deck (ou 👑 pour Commandant)' : 'Cliquer pour ajouter au deck'}"`, cmdBtn, legRing);
@@ -668,7 +724,7 @@ function renderBuilder() {
 
 function openZoom(id) {
   zoomN = id;
-  zoomList = view === 'builder' ? builderIds.slice() : S.cards.map(c => c.id);
+  zoomList = view === 'builder' ? builderIds.slice() : (collectionIds.length ? collectionIds.slice() : S.cards.map(c => c.id));
   if (!zoomList.includes(id)) zoomList.push(id);
   $('#lightbox').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
@@ -696,10 +752,14 @@ function updateLightbox() {
   if (img.getAttribute('src') !== src) img.src = src;
   img.alt = c.name;
   const k = countOf(c.id);
+  const m = manaInfo(manaKey(c));
   $('#lbInfo').innerHTML = `
     <div class="font-semibold">${esc(c.name)} <span class="text-slate-400 text-sm">${cfgOf(c.code)?.emoji || ''} #${esc(c.n)}</span></div>
     <div class="text-xs text-slate-300 mt-0.5">${esc(c.type || '')}</div>
-    ${c.legendary ? `<div class="text-xs text-amber-400 font-semibold mt-1">👑 Créature légendaire / Éligible Commandant</div>` : ''}
+    <div class="flex items-center justify-center gap-3 mt-1 text-xs">
+      ${m ? `<span class="inline-flex items-center gap-1.5 text-slate-300"><span class="mana-dot" style="background:${m.bg}"></span>${esc(m.label)}</span>` : ''}
+      ${c.legendary ? `<span class="text-amber-400 font-semibold">👑 Éligible Commandant</span>` : ''}
+    </div>
     <div class="flex items-center justify-center gap-4 mt-2">
       <button data-dec="${esc(c.id)}" class="w-11 h-11 rounded-lg bg-slate-700 text-2xl leading-none active:bg-slate-600">−</button>
       <span class="font-bold text-xl w-8 text-center ${k > 1 ? 'text-amber-400' : k === 1 ? 'text-emerald-400' : 'text-slate-500'}">${k}</span>
@@ -769,7 +829,6 @@ function render() {
 document.addEventListener('click', e => {
   if (e.target.id === 'lightbox' || e.target.id === 'lbImg') return closeZoom();
 
-  // Boutons modale commandant
   if (e.target.closest('[data-close-cmdmodal]')) return closeCmdModal();
   const selectCmdBtn = e.target.closest('[data-select-cmd]');
   if (selectCmdBtn) {
@@ -777,13 +836,11 @@ document.addEventListener('click', e => {
     return;
   }
 
-  // Clic direct sur l'emplacement commandant vide
   if (e.target.closest('[data-open-cmd]')) {
     openCmdModal();
     return;
   }
 
-  // Bouton promouvoir une carte déjà dans le deck
   const promoBtn = e.target.closest('[data-promote-cmd]');
   if (promoBtn) {
     e.stopPropagation();
@@ -791,22 +848,19 @@ document.addEventListener('click', e => {
     return;
   }
 
-  // Bouton couronne pour définir un commandant depuis le bench
   const cmdBtn = e.target.closest('[data-cmd]');
   if (cmdBtn) {
-    e.stopPropagation(); // Évite d'ajouter la carte comme carte ordinaire du deck
+    e.stopPropagation();
     setAsCommander(cmdBtn.dataset.cmd);
     return;
   }
 
-  // Retirer le commandant
   const removeCmdTarget = e.target.closest('[data-remove-cmd]');
   if (removeCmdTarget) {
     removeCommander();
     return;
   }
 
-  // Bouton zoom
   const zoomTarget = e.target.closest('[data-zoom]');
   if (zoomTarget) {
     e.stopPropagation();
@@ -827,17 +881,16 @@ document.addEventListener('click', e => {
   if (d.da) return deckAction(d.da);
   if (d.close !== undefined) return closeZoom();
   if (d.nav) return navZoom(parseInt(d.nav, 10));
+  if (d.mana) { manaFilter = d.mana; return render(); }
+  if (d.bmana) { benchMana = d.bmana; return render(); }
   if (d.f) { filter = d.f; return render(); }
   if (d.bf) { benchSet = d.bf; return render(); }
   if (d.inc) return setOwned(d.inc, +1);
   if (d.dec) return setOwned(d.dec, -1);
 
-  // Ajout au deck
   if (d.add) {
     const cardToAdd = cardOf(d.add);
-    // Si aucun commandant n'est défini et que la carte est légendaire, proposer ou l'ajouter
     if (!deck.commander && cardToAdd?.legendary) {
-      // Si l'utilisateur clique simplement, on peut l'installer directement en Commandant !
       setAsCommander(d.add);
       return;
     }
@@ -851,7 +904,6 @@ document.addEventListener('click', e => {
     return;
   }
 
-  // Retrait du deck
   if (d.remove) {
     const i = deck.deck.indexOf(d.remove);
     if (i > -1) {
@@ -875,9 +927,9 @@ $('#deckSelect').addEventListener('change', e => {
   }
 });
 
-$('#search').addEventListener('input', e => { 
-  query = e.target.value; 
-  if (S.loaded && view !== 'builder') renderCollection(); 
+$('#search').addEventListener('input', e => {
+  query = e.target.value;
+  if (S.loaded && view !== 'builder') renderCollection();
 });
 
 $('#benchSearch').addEventListener('input', e => {
@@ -928,8 +980,8 @@ function importData(file) {
       if (!done) throw 0;
       cleanDecks(); persist(); render();
       showToast(`Données importées avec succès !`);
-    } catch { 
-      showToast(`Erreur : Fichier de sauvegarde invalide.`, true); 
+    } catch {
+      showToast(`Erreur : Fichier de sauvegarde invalide.`, true);
     }
   };
   r.readAsText(file);
