@@ -46,8 +46,8 @@
 
   <!-- VUE COLLECTION (une licence) -->
   <section id="view-collection" class="hidden">
-    <!-- Onglets de MANA -->
-    <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Trier par mana</div>
+    <!-- Onglets de MANA (sélection multiple) -->
+    <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Trier par mana · sélection multiple</div>
     <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-1" id="manaTabs"></div>
 
     <div class="flex gap-2 overflow-x-auto no-scrollbar mb-2" id="filters"></div>
@@ -163,23 +163,23 @@ const SETS = [
 ];
 const BUILDER_COLOR = "#d97706";
 
-// Onglets de mana (ordre d'affichage)
+// Types de mana sélectionnables (plusieurs possibles en même temps)
 const MANA = [
-  { k: 'W', label: 'Blanc',      bg: '#f5f0cf' },
-  { k: 'U', label: 'Bleu',       bg: '#2f7fd1' },
-  { k: 'B', label: 'Noir',       bg: '#3a3340' },
-  { k: 'R', label: 'Rouge',      bg: '#d63a2f' },
-  { k: 'G', label: 'Vert',       bg: '#2e9a5b' },
-  { k: 'M', label: 'Multicolore',bg: 'linear-gradient(135deg,#f5f0cf 0 25%,#2f7fd1 25% 50%,#d63a2f 50% 75%,#2e9a5b 75%)' },
-  { k: 'C', label: 'Incolore',   bg: '#a8adb5' },
-  { k: 'L', label: 'Terrains',   bg: '#8b6b4a' }
+  { k: 'W', label: 'Blanc',    bg: '#f5f0cf' },
+  { k: 'U', label: 'Bleu',     bg: '#2f7fd1' },
+  { k: 'B', label: 'Noir',     bg: '#3a3340' },
+  { k: 'R', label: 'Rouge',    bg: '#d63a2f' },
+  { k: 'G', label: 'Vert',     bg: '#2e9a5b' },
+  { k: 'C', label: 'Incolore', bg: '#a8adb5' },
+  { k: 'L', label: 'Terrains', bg: '#8b6b4a' }
 ];
+const COLOR_ORDER = ['W', 'U', 'B', 'R', 'G'];
 const manaInfo = k => MANA.find(m => m.k === k);
 /* ========================================== */
 
 const DECK_SIZE = 100;
 const K = {
-  cards:    c => `mtg_${c}_cards_v3`,          // v3 : contient désormais les couleurs de mana
+  cards:    c => `mtg_${c}_cards_v4`,          // v4 : contient les "tags" de mana (couleurs multiples)
   owned:    c => `mtg_${c}_owned_v1`,
   oldDeck1: c => `mtg_${c}_deck_v1`,
   oldDecks: c => `mtg_${c}_decks_v1`,
@@ -271,8 +271,10 @@ const validViews = [...SETS.map(s => s.code), 'builder'];
 let view = load(K.last, SETS[0].code);
 if (!validViews.includes(view)) view = SETS[0].code;
 let S = state[view] || state[SETS[0].code];
-let filter = 'all', query = '', manaFilter = 'all';
-let benchSet = 'all', benchQuery = '', benchMana = 'all', cmdSearchQuery = '';
+let filter = 'all', query = '';
+let manaSel = new Set(), manaMode = 'all';              // filtre mana de la collection
+let benchSet = 'all', benchQuery = '', cmdSearchQuery = '';
+let benchManaSel = new Set(), benchManaMode = 'all';    // filtre mana du bench
 let zoomN = null, zoomList = [], builderIds = [], collectionIds = [];
 
 const cur = () => decks.list.find(d => d.id === decks.active) || decks.list[0];
@@ -285,7 +287,21 @@ const cmpCards = (a, b) => (setIdx(a.code) - setIdx(b.code)) || (a.num - b.num) 
 const inDeck = id => cur().deck.includes(id);
 const totalOf = d => d.deck.length + (d.commander ? 1 : 0);
 const totalDeck = () => totalOf(cur());
-const manaKey = c => c.mana || 'C';
+
+/* ---------- Filtre mana multi-sélection ----------
+   "all" (ET) : la carte doit contenir TOUS les types choisis (ex. 5 couleurs → seulement les cartes 5 couleurs)
+   "any" (OU) : la carte doit contenir AU MOINS UN des types choisis */
+function matchMana(c, sel, mode) {
+  if (!sel.size) return true;
+  const tags = c.tags || ['C'];
+  const picked = [...sel];
+  return mode === 'all' ? picked.every(k => tags.includes(k)) : picked.some(k => tags.includes(k));
+}
+function toggleSel(sel, k) {
+  if (k === 'all') sel.clear();
+  else if (sel.has(k)) sel.delete(k);
+  else sel.add(k);
+}
 
 function idStillValid(id) {
   const st = state[codeOf(id)];
@@ -360,20 +376,14 @@ const isV1 = c =>
   !c.full_art && !c.variation &&
   !/^\d+★$|[a-z]$/i.test(c.collector_number);
 
-// Détermine la catégorie de mana : W/U/B/R/G (mono), M (multicolore), C (incolore), L (terrain)
-function manaOf(c) {
-  const front = c.card_faces?.[0] || {};
-  const typeLine = c.type_line || front.type_line || '';
-  const isLand = /\bLand\b/i.test(typeLine.split('//')[0]);
-  if (isLand) return 'L';
-  const cols = (c.colors && c.colors.length ? c.colors
-             : (front.colors && front.colors.length ? front.colors : [])) || [];
-  // Cartes double-face : fusionne les couleurs des faces si le niveau carte est vide
-  const all = cols.length ? cols
-    : [...new Set((c.card_faces || []).flatMap(f => f.colors || []))];
-  if (all.length > 1) return 'M';
-  if (all.length === 1) return all[0];
-  return 'C';
+// Liste des "tags" de mana d'une carte : couleurs WUBRG (plusieurs possibles), ou C (incolore), ou L (terrain)
+function tagsOf(c) {
+  const faces = c.card_faces || [];
+  const typeLine = c.type_line || faces[0]?.type_line || '';
+  if (/\bLand\b/i.test(typeLine.split('//')[0])) return ['L'];
+  let cols = (c.colors && c.colors.length) ? c.colors : [...new Set(faces.flatMap(f => f.colors || []))];
+  cols = COLOR_ORDER.filter(k => cols.includes(k));
+  return cols.length ? cols : ['C'];
 }
 
 function normalize(c) {
@@ -395,13 +405,16 @@ function normalize(c) {
     isCreature: isCreature,
     isCommanderEligible: isLegendary && (isCreature || /planeswalker/i.test(fullTypeStr)),
     basic: isBasic,
-    mana: manaOf(c),
+    tags: tagsOf(c),
     lang: c.lang
   };
 }
 
 function setCards(st, list) {
-  list.forEach(c => { c.code = st.cfg.code; c.id = `${c.code}:${c.n}`; c.mana = c.mana || 'C'; });
+  list.forEach(c => {
+    c.code = st.cfg.code; c.id = `${c.code}:${c.n}`;
+    if (!Array.isArray(c.tags) || !c.tags.length) c.tags = ['C'];
+  });
   list.sort((a, b) => (a.num - b.num) || a.n.localeCompare(b.n, undefined, { numeric: true }));
   st.cards = list;
   st.map = new Map(list.map(c => [c.n, c]));
@@ -417,12 +430,12 @@ async function loadSet(code) {
       fetchAll(`set:${code} lang:en`),
       fetchAll(`set:${code} lang:fr`)
     ]);
-    // Les infos de couleur sont prises sur la version EN (toujours complète), le nom/image sur la FR si dispo
-    const enMana = new Map(en.map(c => [c.collector_number, manaOf(c)]));
+    // Les couleurs sont prises sur la version EN (toujours complète), nom/image sur la FR si dispo
+    const enTags = new Map(en.map(c => [c.collector_number, tagsOf(c)]));
     const map = new Map();
     [...en, ...fr].filter(isV1).forEach(c => {
       const n = normalize(c);
-      if (enMana.has(c.collector_number)) n.mana = enMana.get(c.collector_number);
+      if (enTags.has(c.collector_number)) n.tags = enTags.get(c.collector_number);
       map.set(c.collector_number, n);
     });
     const list = [...map.values()].filter(c => c.img);
@@ -447,7 +460,7 @@ function switchView(v) {
   closeZoom();
   closeCmdModal();
   view = v;
-  if (state[v]) { S = state[v]; query = ''; $('#search').value = ''; filter = 'all'; manaFilter = 'all'; }
+  if (state[v]) { S = state[v]; query = ''; $('#search').value = ''; filter = 'all'; manaSel = new Set(); manaMode = 'all'; }
   persist(true);
   render();
   ensureLoaded();
@@ -556,19 +569,20 @@ function renderCmdModalList() {
   `).join('');
 }
 
-/* ---------- Onglets de mana (réutilisés collection + bench) ---------- */
-// cards : liste de base à compter ; attr : data-attribut du bouton ; current : clé active ; ownedMode : affiche possédées/total
-function manaTabsHTML(cards, attr, current, ownedMode) {
+/* ---------- Onglets de mana multi-sélection (collection + bench) ----------
+   cards : liste de base pour les compteurs ; attr/modeAttr : data-attributs ; sel : Set sélectionné */
+function manaTabsHTML(cards, attr, modeAttr, sel, mode, ownedMode) {
   const tot = {}, own = {};
-  cards.forEach(c => {
-    const k = manaKey(c);
+  cards.forEach(c => (c.tags || ['C']).forEach(k => {
     tot[k] = (tot[k] || 0) + 1;
     if (countOf(c.id) > 0) own[k] = (own[k] || 0) + 1;
-  });
+  }));
+  const ownedCards = cards.filter(c => countOf(c.id) > 0).length;
+
   const chip = (k, label, bg, count, ownedCount) => {
-    const on = current === k;
+    const on = k === 'all' ? sel.size === 0 : sel.has(k);
     const empty = k !== 'all' && !count && !on;
-    const num = ownedMode && k !== 'all' ? `${ownedCount || 0}/${count || 0}` : `${count || 0}`;
+    const num = ownedMode ? `${ownedCount || 0}/${count || 0}` : `${count || 0}`;
     return `<button ${attr}="${k}" class="mana-chip px-3 py-1.5 rounded-full text-xs font-semibold border ${
       on ? 'bg-slate-100 text-slate-900 border-white shadow' : 'bg-slate-800 text-slate-300 border-slate-700'} ${empty ? 'opacity-40' : ''}">
       ${bg ? `<span class="mana-dot" style="background:${bg}"></span>` : ''}
@@ -576,10 +590,23 @@ function manaTabsHTML(cards, attr, current, ownedMode) {
       <span class="${on ? 'text-slate-600' : 'text-slate-500'} font-normal">${num}</span>
     </button>`;
   };
-  const sumOwned = Object.values(own).reduce((a, b) => a + b, 0);
-  return chip('all', 'Tous', null, cards.length, sumOwned) +
+
+  let html = chip('all', 'Tous', null, cards.length, ownedCards) +
     MANA.map(m => chip(m.k, m.label, m.bg, tot[m.k], own[m.k])).join('');
+
+  // Mode ET / OU : visible dès qu'on sélectionne 2 types ou plus
+  if (sel.size > 1) {
+    html += `<button ${modeAttr}="1" title="Changer le mode de combinaison" class="mana-chip px-3 py-1.5 rounded-full text-xs font-bold border border-amber-500/70 bg-amber-500/15 text-amber-300">
+      ⚖️ ${mode === 'all' ? 'ET · contient tout' : 'OU · au moins un'}
+    </button>`;
+  }
+  return html;
 }
+
+const dotsHTML = tags => (tags || []).map(k => {
+  const m = manaInfo(k);
+  return m ? `<span class="mana-dot" title="${esc(m.label)}" style="background:${m.bg}"></span>` : '';
+}).join('');
 
 const FILTERS = [['all', 'Toutes'], ['owned', 'Possédées'], ['missing', 'Manquantes'], ['dupes', 'Doublons']];
 
@@ -590,12 +617,12 @@ function renderFilters() {
 }
 
 function renderCollection() {
-  $('#manaTabs').innerHTML = manaTabsHTML(S.cards, 'data-mana', manaFilter, true);
+  $('#manaTabs').innerHTML = manaTabsHTML(S.cards, 'data-mana', 'data-mmode', manaSel, manaMode, true);
 
   const q = query.trim().toLowerCase();
   const list = S.cards.filter(c => {
     const k = countOf(c.id);
-    if (manaFilter !== 'all' && manaKey(c) !== manaFilter) return false;
+    if (!matchMana(c, manaSel, manaMode)) return false;
     if (filter === 'owned' && k < 1) return false;
     if (filter === 'missing' && k > 0) return false;
     if (filter === 'dupes' && k < 2) return false;
@@ -606,13 +633,12 @@ function renderCollection() {
 
   $('#grid').innerHTML = list.map(c => {
     const k = countOf(c.id);
-    const m = manaInfo(manaKey(c));
     return `
     <div class="tile relative rounded-lg overflow-hidden bg-slate-900 ${k === 0 ? 'opacity-40 grayscale' : ''} ${k > 1 ? 'ring-2 ring-amber-400' : k === 1 ? 'ring-1 ring-emerald-500' : ''}">
       <img data-zoom="${esc(c.id)}" src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy" class="w-full block">
       <span class="absolute top-1 left-1 text-[10px] bg-black/70 px-1.5 rounded pointer-events-none">#${esc(c.n)}</span>
       ${c.legendary ? `<span class="absolute top-1 left-9 text-[11px] bg-black/80 px-1 rounded pointer-events-none" title="Légendaire">👑</span>` : ''}
-      ${m ? `<span class="mana-dot absolute bottom-10 left-1 pointer-events-none" title="${esc(m.label)}" style="background:${m.bg}"></span>` : ''}
+      <span class="absolute bottom-10 left-1 flex gap-0.5 pointer-events-none">${dotsHTML(c.tags)}</span>
       ${k > 1 ? `<span class="absolute top-1 right-1 bg-amber-400 text-black text-xs font-extrabold rounded-full px-2 py-0.5 shadow pointer-events-none">×${k}</span>` : ''}
       ${k === 1 ? `<span class="absolute top-1 right-1 bg-emerald-500 text-black text-xs font-bold rounded-full w-5 h-5 grid place-items-center pointer-events-none">✓</span>` : ''}
       <div class="absolute bottom-0 inset-x-0 flex items-center justify-between bg-black/75 px-1 py-1">
@@ -697,7 +723,7 @@ function renderBuilder() {
     return mini(c, `data-remove="${esc(c.id)}" title="Cliquer pour retirer du deck"`, cmdPromoteBtn);
   }).join('') || `<p class="col-span-full text-center text-slate-500 text-xs py-4">Deck vide – clique sur des cartes du Bench pour constituer votre deck.</p>`;
 
-  // Bench : base (sans filtre de mana) pour compter les onglets, puis filtre mana
+  // Bench : base (sans filtre mana) pour compter les onglets, puis filtre mana multi-sélection
   const q = benchQuery.trim().toLowerCase();
   const benchBase = allCards().filter(c => {
     if (countOf(c.id) <= 0) return false;
@@ -708,8 +734,8 @@ function renderBuilder() {
     if (q && !(c.name.toLowerCase().includes(q) || c.n === q || (c.type && c.type.toLowerCase().includes(q)))) return false;
     return true;
   });
-  $('#benchMana').innerHTML = manaTabsHTML(benchBase, 'data-bmana', benchMana, false);
-  const bench = benchBase.filter(c => benchMana === 'all' || manaKey(c) === benchMana);
+  $('#benchMana').innerHTML = manaTabsHTML(benchBase, 'data-bmana', 'data-bmmode', benchManaSel, benchManaMode, false);
+  const bench = benchBase.filter(c => matchMana(c, benchManaSel, benchManaMode));
 
   $('#bench').innerHTML = bench.map(c => {
     const cmdBtn = c.legendary
@@ -752,12 +778,12 @@ function updateLightbox() {
   if (img.getAttribute('src') !== src) img.src = src;
   img.alt = c.name;
   const k = countOf(c.id);
-  const m = manaInfo(manaKey(c));
+  const manaLabels = (c.tags || []).map(t => manaInfo(t)?.label).filter(Boolean).join(' / ');
   $('#lbInfo').innerHTML = `
     <div class="font-semibold">${esc(c.name)} <span class="text-slate-400 text-sm">${cfgOf(c.code)?.emoji || ''} #${esc(c.n)}</span></div>
     <div class="text-xs text-slate-300 mt-0.5">${esc(c.type || '')}</div>
     <div class="flex items-center justify-center gap-3 mt-1 text-xs">
-      ${m ? `<span class="inline-flex items-center gap-1.5 text-slate-300"><span class="mana-dot" style="background:${m.bg}"></span>${esc(m.label)}</span>` : ''}
+      <span class="inline-flex items-center gap-1.5 text-slate-300"><span class="flex gap-0.5">${dotsHTML(c.tags)}</span>${esc(manaLabels)}</span>
       ${c.legendary ? `<span class="text-amber-400 font-semibold">👑 Éligible Commandant</span>` : ''}
     </div>
     <div class="flex items-center justify-center gap-4 mt-2">
@@ -881,8 +907,13 @@ document.addEventListener('click', e => {
   if (d.da) return deckAction(d.da);
   if (d.close !== undefined) return closeZoom();
   if (d.nav) return navZoom(parseInt(d.nav, 10));
-  if (d.mana) { manaFilter = d.mana; return render(); }
-  if (d.bmana) { benchMana = d.bmana; return render(); }
+
+  // Mana : clic = ajoute / retire un type de la sélection ("Tous" = vider la sélection)
+  if (d.mana) { toggleSel(manaSel, d.mana); return render(); }
+  if (d.mmode) { manaMode = manaMode === 'all' ? 'any' : 'all'; return render(); }
+  if (d.bmana) { toggleSel(benchManaSel, d.bmana); return render(); }
+  if (d.bmmode) { benchManaMode = benchManaMode === 'all' ? 'any' : 'all'; return render(); }
+
   if (d.f) { filter = d.f; return render(); }
   if (d.bf) { benchSet = d.bf; return render(); }
   if (d.inc) return setOwned(d.inc, +1);
