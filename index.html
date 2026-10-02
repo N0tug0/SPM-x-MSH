@@ -163,8 +163,9 @@
    - keepAll : true = on garde aussi les versions showcase / borderless / full art, etc. */
 const SETS = [
   { code: "spm", label: "Spider-Man",          short: "Spider-Man", emoji: "🕷️", color: "#dc2626",
-    sources: [ { code: "spm" }, { code: "mar", keepAll: true }, { code: "spe", force: [21, 26] } ] },
-  { code: "msh", label: "Marvel Super Heroes", short: "Marvel SH",  emoji: "🦸", color: "#4f46e5" }
+    sources: [ { code: "spm", keepAll: true }, { code: "mar", keepAll: true }, { code: "spe", force: [21, 26] } ] },
+  { code: "msh", label: "Marvel Super Heroes", short: "Marvel SH",  emoji: "🦸", color: "#4f46e5",
+    sources: [ { code: "msh", keepAll: true } ] }
 ];
 const BUILDER_COLOR = "#d97706";
 
@@ -185,7 +186,7 @@ const srcsOf = cfg => cfg.sources || [{ code: cfg.code }];
 
 const DECK_SIZE = 100;
 const K = {
-  cards:    c => `mtg_${c}_cards_v5`,          // v5 : sets fusionnés (SPM + MAR + SPE)
+  cards:    c => `mtg_${c}_cards_v6`,          // v6 : variantes (full art…) + faces des cartes retournables
   owned:    c => `mtg_${c}_owned_v1`,
   oldDeck1: c => `mtg_${c}_deck_v1`,
   oldDecks: c => `mtg_${c}_decks_v1`,
@@ -282,6 +283,12 @@ let manaSel = new Set(), manaMode = 'all';              // filtre mana de la col
 let benchSet = 'all', benchQuery = '', cmdSearchQuery = '';
 let benchManaSel = new Set(), benchManaMode = 'all';    // filtre mana du bench
 let zoomN = null, zoomList = [], builderIds = [], collectionIds = [];
+const flipped = new Set();                                  // cartes actuellement retournées (face B)
+const faceOf = c => (c.faces && flipped.has(c.id)) ? c.faces[1] : c;
+function toggleFlip(id) {
+  if (flipped.has(id)) flipped.delete(id); else flipped.add(id);
+  render();
+}
 
 const cur = () => decks.list.find(d => d.id === decks.active) || decks.list[0];
 const touch = () => { cur().updated = Date.now(); };
@@ -394,6 +401,18 @@ function tagsOf(c) {
   return cols.length ? cols : ['C'];
 }
 
+// Type de variante d'une impression ('' = version normale)
+function variantOf(c) {
+  const fx = c.frame_effects || [];
+  if (c.full_art) return 'Full art';
+  if (c.border_color === 'borderless') return 'Borderless';
+  if (fx.includes('showcase')) return 'Showcase';
+  if (fx.includes('extendedart')) return 'Art étendu';
+  if (fx.includes('inverted')) return 'Inversée';
+  if (c.variation || /^\d+★$|[a-z]$/i.test(c.collector_number)) return 'Variante';
+  return '';
+}
+
 // prefix : '' pour le set principal, "MAR-" / "SPE-" pour les sets fusionnés (évite les collisions de numéros)
 function normalize(c, prefix = '', so = 0) {
   const iu = c.image_uris || c.card_faces?.[0]?.image_uris || {};
@@ -403,6 +422,11 @@ function normalize(c, prefix = '', so = 0) {
   const isCreature = /creature|créature/i.test(fullTypeStr);
   const isBasic = /basic|base/i.test(fullTypeStr) && /land|terrain/i.test(fullTypeStr);
   const num = parseInt(c.collector_number, 10);
+  // Cartes retournables (transform / modal DFC) : une image par face
+  const f0 = c.card_faces?.[0]?.image_uris, f1 = c.card_faces?.[1]?.image_uris;
+  const faces = (f0 && f1)
+    ? [ { img: f0.normal || '', big: f0.large || f0.normal || '' }, { img: f1.normal || '', big: f1.large || f1.normal || '' } ]
+    : null;
 
   return {
     n: prefix + c.collector_number,
@@ -417,6 +441,8 @@ function normalize(c, prefix = '', so = 0) {
     isCommanderEligible: isLegendary && (isCreature || /planeswalker/i.test(fullTypeStr)),
     basic: isBasic,
     tags: tagsOf(c),
+    faces,
+    variant: variantOf(c),
     lang: c.lang
   };
 }
@@ -634,7 +660,7 @@ const dotsHTML = tags => (tags || []).map(k => {
   return m ? `<span class="mana-dot" title="${esc(m.label)}" style="background:${m.bg}"></span>` : '';
 }).join('');
 
-const FILTERS = [['all', 'Toutes'], ['owned', 'Possédées'], ['missing', 'Manquantes'], ['dupes', 'Doublons']];
+const FILTERS = [['all', 'Toutes'], ['owned', 'Possédées'], ['missing', 'Manquantes'], ['dupes', 'Doublons'], ['var', 'Variantes']];
 
 function renderFilters() {
   $('#filters').innerHTML = FILTERS.map(([k, l]) =>
@@ -652,6 +678,7 @@ function renderCollection() {
     if (filter === 'owned' && k < 1) return false;
     if (filter === 'missing' && k > 0) return false;
     if (filter === 'dupes' && k < 2) return false;
+    if (filter === 'var' && !c.variant) return false;
     if (q && !(c.name.toLowerCase().includes(q) || matchNum(c, q))) return false;
     return true;
   });
@@ -661,12 +688,14 @@ function renderCollection() {
     const k = countOf(c.id);
     return `
     <div class="tile relative rounded-lg overflow-hidden bg-slate-900 ${k === 0 ? 'opacity-40 grayscale' : ''} ${k > 1 ? 'ring-2 ring-amber-400' : k === 1 ? 'ring-1 ring-emerald-500' : ''}">
-      <img data-zoom="${esc(c.id)}" src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy" class="w-full block">
-      <div class="absolute top-1 left-1 flex items-center gap-1 pointer-events-none">
+      <img data-zoom="${esc(c.id)}" src="${esc(faceOf(c).img)}" alt="${esc(c.name)}" loading="lazy" class="w-full block">
+      <div class="absolute top-1 left-1 right-8 flex flex-wrap items-center gap-1 pointer-events-none">
         <span class="text-[10px] bg-black/70 px-1.5 rounded">#${esc(c.n)}</span>
         ${c.legendary ? `<span class="text-[11px] bg-black/80 px-1 rounded" title="Légendaire">👑</span>` : ''}
+        ${c.variant ? `<span class="text-[9px] bg-fuchsia-600/90 px-1 rounded font-semibold">✨ ${esc(c.variant)}</span>` : ''}
       </div>
       <span class="absolute bottom-10 left-1 flex gap-0.5 pointer-events-none">${dotsHTML(c.tags)}</span>
+      ${flipBtn(c, 'bottom-10 right-1')}
       ${k > 1 ? `<span class="absolute top-1 right-1 bg-amber-400 text-black text-xs font-extrabold rounded-full px-2 py-0.5 shadow pointer-events-none">×${k}</span>` : ''}
       ${k === 1 ? `<span class="absolute top-1 right-1 bg-emerald-500 text-black text-xs font-bold rounded-full w-5 h-5 grid place-items-center pointer-events-none">✓</span>` : ''}
       <div class="absolute bottom-0 inset-x-0 flex items-center justify-between bg-black/75 px-1 py-1">
@@ -679,12 +708,15 @@ function renderCollection() {
 }
 
 const zoomBtn = id => `<button data-zoom="${esc(id)}" title="Agrandir" class="absolute bottom-0.5 right-0.5 bg-black/80 hover:bg-black text-white rounded-full w-6 h-6 text-[11px] leading-none grid place-items-center z-10">🔍</button>`;
+const flipBtn = (c, pos) => c.faces
+  ? `<button data-flip="${esc(c.id)}" title="Retourner la carte" class="absolute ${pos} bg-sky-600/95 hover:bg-sky-500 text-white rounded-full w-6 h-6 text-[11px] leading-none grid place-items-center shadow z-20">🔄</button>`
+  : '';
 const setBadge = c => `<span class="absolute top-0.5 left-0.5 text-[10px] leading-none bg-black/75 rounded px-1 py-0.5 pointer-events-none z-10">${cfgOf(c.code)?.emoji || ''}</span>`;
 
 const mini = (c, attrs, extra = '', cls = '') => `
   <div class="relative group cursor-pointer active:scale-95 transition ${cls}" ${attrs}>
-    <img src="${esc(c.img)}" alt="${esc(c.name)}" loading="lazy" class="w-full rounded block shadow">
-    ${setBadge(c)}${extra}${zoomBtn(c.id)}
+    <img src="${esc(faceOf(c).img)}" alt="${esc(c.name)}" loading="lazy" class="w-full rounded block shadow">
+    ${setBadge(c)}${extra}${zoomBtn(c.id)}${flipBtn(c, 'bottom-0.5 left-0.5')}
   </div>`;
 
 function renderDeckSelect() {
@@ -713,10 +745,11 @@ function renderBuilder() {
   if (cmd) {
     $('#commander').innerHTML = `
       <div class="relative group cursor-pointer" data-remove-cmd="1" title="Cliquer pour retirer le commandant">
-        <img src="${esc(cmd.img)}" alt="${esc(cmd.name)}" class="w-full rounded-lg ring-2 ring-amber-400 shadow-lg block">
+        <img src="${esc(faceOf(cmd).img)}" alt="${esc(cmd.name)}" class="w-full rounded-lg ring-2 ring-amber-400 shadow-lg block">
         ${setBadge(cmd)}
         <button data-remove-cmd="1" class="absolute top-1 right-1 bg-red-600/90 text-white rounded-full w-6 h-6 text-xs font-bold leading-none grid place-items-center shadow z-10" title="Retirer">✕</button>
         ${zoomBtn(cmd.id)}
+        ${flipBtn(cmd, 'top-8 right-1')}
         <div class="mt-1 text-[11px] font-bold text-amber-300 truncate">${esc(cmd.name)}</div>
       </div>
     `;
@@ -802,7 +835,8 @@ function updateLightbox() {
   const c = zoomN && cardOf(zoomN);
   if (!c) return closeZoom();
   const img = $('#lbImg');
-  const src = c.big || c.img;
+  const fc = faceOf(c);
+  const src = fc.big || fc.img;
   if (img.getAttribute('src') !== src) img.src = src;
   img.alt = c.name;
   const k = countOf(c.id);
@@ -810,6 +844,10 @@ function updateLightbox() {
   $('#lbInfo').innerHTML = `
     <div class="font-semibold">${esc(c.name)} <span class="text-slate-400 text-sm">${cfgOf(c.code)?.emoji || ''} #${esc(c.n)}</span></div>
     <div class="text-xs text-slate-300 mt-0.5">${esc(c.type || '')}</div>
+    ${(c.variant || c.faces) ? `<div class="flex items-center justify-center gap-2 mt-1">
+      ${c.variant ? `<span class="text-[10px] bg-fuchsia-600/90 px-1.5 py-0.5 rounded font-semibold">✨ ${esc(c.variant)}</span>` : ''}
+      ${c.faces ? `<button data-flip="${esc(c.id)}" class="text-xs px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 font-semibold active:scale-95">🔄 Retourner la carte</button>` : ''}
+    </div>` : ''}
     <div class="flex items-center justify-center gap-3 mt-1 text-xs">
       <span class="inline-flex items-center gap-1.5 text-slate-300"><span class="flex gap-0.5">${dotsHTML(c.tags)}</span>${esc(manaLabels)}</span>
       ${c.legendary ? `<span class="text-amber-400 font-semibold">👑 Éligible Commandant</span>` : ''}
@@ -856,7 +894,7 @@ function renderStats() {
 function render() {
   const isB = view === 'builder';
   document.documentElement.style.setProperty('--acc', isB ? BUILDER_COLOR : S.cfg.color);
-  $('#setName').textContent = isB ? 'Commander Builder · Mix' : `${S.cfg.label} · ${srcsOf(S.cfg).map(s => s.code.toUpperCase()).join(' + ')}`;
+  $('#setName').textContent = isB ? 'Commander Builder · Mix' : S.cfg.label;
   document.title = isB ? 'Marvel MTG – Deck Builder' : `${S.cfg.label} MTG – Collection`;
   renderViewTabs();
   renderStats();
@@ -881,7 +919,15 @@ function render() {
 }
 
 document.addEventListener('click', e => {
-  if (e.target.id === 'lightbox' || e.target.id === 'lbImg') return closeZoom();
+  if (e.target.id === 'lightbox') return closeZoom();
+  if (e.target.id === 'lbImg') {
+    // sur une carte retournable, un clic sur l'image la retourne (fermer = ✕ ou clic dans le fond noir)
+    const lc = zoomN && cardOf(zoomN);
+    return lc?.faces ? toggleFlip(lc.id) : closeZoom();
+  }
+
+  const flipTarget = e.target.closest('[data-flip]');
+  if (flipTarget) { e.stopPropagation(); return toggleFlip(flipTarget.dataset.flip); }
 
   if (e.target.closest('[data-close-cmdmodal]')) return closeCmdModal();
   const selectCmdBtn = e.target.closest('[data-select-cmd]');
