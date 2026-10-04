@@ -90,11 +90,14 @@
         </div>
         <div id="deckMix" class="text-xs text-slate-400 mt-1.5"></div>
         <p class="text-[11px] text-slate-400 mt-2 leading-relaxed">
-          Clique sur l'emplacement du Commandant ou sur l'icône 👑 d'une carte légendaire pour la désigner. Clique sur une carte du deck pour la renvoyer au bench.
+          Clique sur l'emplacement du Commandant ou sur l'icône 👑 d'une carte légendaire pour la désigner. Clique sur une carte du deck pour la renvoyer au bench. Clique sur 🔍 pour la regarder en grand.
         </p>
         <button id="resetDeck" class="mt-2.5 text-xs px-2.5 py-1 rounded bg-slate-800/80 hover:bg-slate-800 text-rose-300 border border-rose-900/40 active:scale-95 transition">Vider ce deck</button>
       </div>
     </div>
+
+    <!-- COMPOSITION DU DECK : 33 créatures / 33 sorts / 33 énergie -->
+    <div id="catStats" class="grid grid-cols-3 gap-2 mb-4"></div>
 
     <div class="flex items-center justify-between mb-1.5">
       <h2 class="text-sm font-semibold flex items-center gap-1.5">
@@ -186,7 +189,7 @@ const srcsOf = cfg => cfg.sources || [{ code: cfg.code }];
 
 const DECK_SIZE = 100;
 const K = {
-  cards:    c => `mtg_${c}_cards_v6`,          // v6 : variantes (full art…) + faces des cartes retournables
+  cards:    c => `mtg_${c}_cards_v7`,          // v7 : + catégorie (créature / sort / terrain)
   owned:    c => `mtg_${c}_owned_v1`,
   oldDeck1: c => `mtg_${c}_deck_v1`,
   oldDecks: c => `mtg_${c}_decks_v1`,
@@ -280,7 +283,7 @@ if (!validViews.includes(view)) view = SETS[0].code;
 let S = state[view] || state[SETS[0].code];
 let filter = 'all', query = '';
 let manaSel = new Set(), manaMode = 'all';              // filtre mana de la collection
-let benchSet = 'all', benchQuery = '', cmdSearchQuery = '';
+let benchSet = 'all', benchQuery = '', cmdSearchQuery = '', benchCat = 'all';
 let benchManaSel = new Set(), benchManaMode = 'all';    // filtre mana du bench
 let zoomN = null, zoomList = [], builderIds = [], collectionIds = [];
 const flipped = new Set();                                  // cartes actuellement retournées (face B)
@@ -302,6 +305,28 @@ const inDeck = id => cur().deck.includes(id);
 const totalOf = d => d.deck.length + (d.commander ? 1 : 0);
 const totalDeck = () => totalOf(cur());
 const matchNum = (c, q) => c.n.toLowerCase() === q;
+
+/* ---------- Composition du deck (hors commandant) : 33 + 33 + 33 = 99, + 1 commandant = 100 ---------- */
+const CAT = {
+  creature: { label: 'Créatures', emoji: '🐾', max: 33, sub: 'dont légendaires' },
+  spell:    { label: 'Sorts',     emoji: '✨', max: 33, sub: 'rituel · éphémère · instant…' },
+  land:     { label: 'Énergie',   emoji: '⚡', max: 33, sub: 'terrains' }
+};
+function catOf(c) {
+  if (c.cat) return c.cat;
+  const t = String(c.type || '');
+  if (/\bland\b|terrain/i.test(t.split('//')[0])) return 'land';
+  return /creature|créature/i.test(t) ? 'creature' : 'spell';
+}
+function deckCounts(d) {
+  const r = { creature: 0, spell: 0, land: 0, legendary: 0 };
+  d.deck.map(cardOf).filter(Boolean).forEach(c => {
+    const k = catOf(c);
+    r[k]++;
+    if (k === 'creature' && c.legendary) r.legendary++;
+  });
+  return r;
+}
 
 /* ---------- Filtre mana multi-sélection ----------
    "all" (ET) : la carte doit contenir TOUS les types choisis (ex. 5 couleurs → seulement les cartes 5 couleurs)
@@ -422,6 +447,9 @@ function normalize(c, prefix = '', so = 0) {
   const isCreature = /creature|créature/i.test(fullTypeStr);
   const isBasic = /basic|base/i.test(fullTypeStr) && /land|terrain/i.test(fullTypeStr);
   const num = parseInt(c.collector_number, 10);
+  // Catégorie de deck (type_line Scryfall = toujours en anglais, face avant) : terrain / créature / sort
+  const frontType = (c.card_faces?.[0]?.type_line || c.type_line || '').split('//')[0];
+  const cat = /\bLand\b/i.test(frontType) ? 'land' : /\bCreature\b/i.test(frontType) ? 'creature' : 'spell';
   // Cartes retournables (transform / modal DFC) : une image par face
   const f0 = c.card_faces?.[0]?.image_uris, f1 = c.card_faces?.[1]?.image_uris;
   const faces = (f0 && f1)
@@ -442,6 +470,7 @@ function normalize(c, prefix = '', so = 0) {
     basic: isBasic,
     tags: tagsOf(c),
     faces,
+    cat,
     variant: variantOf(c),
     lang: c.lang
   };
@@ -707,7 +736,7 @@ function renderCollection() {
   }).join('') || `<p class="col-span-full text-center text-slate-500 py-8">Aucune carte.</p>`;
 }
 
-const zoomBtn = id => `<button data-zoom="${esc(id)}" title="Agrandir" class="absolute bottom-0.5 right-0.5 bg-black/80 hover:bg-black text-white rounded-full w-6 h-6 text-[11px] leading-none grid place-items-center z-10">🔍</button>`;
+const zoomBtn = id => `<button data-zoom="${esc(id)}" title="Agrandir" class="absolute bottom-0.5 right-0.5 bg-black/85 hover:bg-black text-white rounded-full w-7 h-7 text-xs leading-none grid place-items-center z-20 ring-1 ring-white/30">🔍</button>`;
 const flipBtn = (c, pos) => c.faces
   ? `<button data-flip="${esc(c.id)}" title="Retourner la carte" class="absolute ${pos} bg-sky-600/95 hover:bg-sky-500 text-white rounded-full w-6 h-6 text-[11px] leading-none grid place-items-center shadow z-20">🔄</button>`
   : '';
@@ -733,7 +762,26 @@ function renderBenchFilters() {
   ];
   $('#benchFilters').innerHTML = opts.map(([k, l]) =>
     `<button data-bf="${k}" class="whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-semibold ${
-      benchSet === k ? 'acc-bg text-white' : 'bg-slate-800 text-slate-300'}">${esc(l)}</button>`).join('');
+      benchSet === k ? 'acc-bg text-white' : 'bg-slate-800 text-slate-300'}">${esc(l)}</button>`).join('') +
+    (benchCat !== 'all'
+      ? `<button data-cat="${benchCat}" class="whitespace-nowrap px-3 py-1.5 rounded-full text-xs font-bold border border-amber-500/70 bg-amber-500/15 text-amber-300">✕ ${CAT[benchCat].emoji} ${CAT[benchCat].label}</button>`
+      : '');
+}
+
+function renderCatStats(cnt) {
+  $('#catStats').innerHTML = Object.entries(CAT).map(([k, info]) => {
+    const n = cnt[k], over = n > info.max, full = n === info.max;
+    const bar = over ? 'bg-rose-500' : full ? 'bg-emerald-500' : 'acc-bg';
+    const txt = over ? 'text-rose-400' : full ? 'text-emerald-400' : 'text-slate-100';
+    const sub = k === 'creature' ? `👑 ${cnt.legendary} légendaire${cnt.legendary > 1 ? 's' : ''}` : info.sub;
+    return `<button data-cat="${k}" title="Filtrer le bench : ${esc(info.label)}" class="text-left rounded-xl p-2 border transition active:scale-95 min-w-0 ${
+      benchCat === k ? 'border-white bg-slate-800' : 'border-slate-800 bg-slate-900/60 hover:bg-slate-900'}">
+      <div class="text-[11px] text-slate-400 truncate">${info.emoji} ${info.label}</div>
+      <div class="font-extrabold text-lg leading-tight ${txt}">${n}<span class="text-slate-500 text-xs font-normal"> / ${info.max}</span></div>
+      <div class="h-1.5 bg-slate-800 rounded-full overflow-hidden mt-1"><div class="h-full ${bar}" style="width:${Math.min(100, n / info.max * 100)}%"></div></div>
+      <div class="text-[10px] text-slate-500 mt-1 truncate">${full ? '✅ Complet · ' : ''}${sub}</div>
+    </button>`;
+  }).join('');
 }
 
 function renderBuilder() {
@@ -774,6 +822,8 @@ function renderBuilder() {
 
   const deckCards = d.deck.map(cardOf).filter(Boolean).sort(cmpCards);
   $('#deckBadgeCount').textContent = d.deck.length;
+  const cnt = deckCounts(d);
+  renderCatStats(cnt);
 
   const mixIds = [...d.deck, d.commander].filter(Boolean);
   const mixCounts = SETS.map(s => `${s.emoji} ${mixIds.filter(id => codeOf(id) === s.code).length}`).join('  ·  ');
@@ -790,6 +840,7 @@ function renderBuilder() {
     if (countOf(c.id) <= 0) return false;
     if (inDeck(c.id)) return false;
     if (d.commander === c.id) return false;
+    if (benchCat !== 'all' && catOf(c) !== benchCat) return false;
     if (benchSet === 'leg' && !c.legendary) return false;
     if (benchSet !== 'all' && benchSet !== 'leg' && c.code !== benchSet) return false;
     if (q && !(c.name.toLowerCase().includes(q) || matchNum(c, q) || (c.type && c.type.toLowerCase().includes(q)))) return false;
@@ -802,7 +853,8 @@ function renderBuilder() {
     const cmdBtn = c.legendary
       ? `<button data-cmd="${esc(c.id)}" title="Définir comme Commandant" class="absolute top-0.5 right-0.5 bg-amber-400 hover:bg-amber-300 active:scale-110 text-black font-bold rounded-full w-6 h-6 text-xs shadow-md leading-none grid place-items-center z-20">👑</button>`
       : '';
-    const legRing = c.legendary ? 'ring-1 ring-amber-500/50' : '';
+    const isFull = cnt[catOf(c)] >= CAT[catOf(c)].max;
+    const legRing = (c.legendary ? 'ring-1 ring-amber-500/50' : '') + (isFull ? ' opacity-40 grayscale' : '');
     return mini(c, `data-add="${esc(c.id)}" title="${c.legendary ? 'Cliquer pour ajouter au deck (ou 👑 pour Commandant)' : 'Cliquer pour ajouter au deck'}"`, cmdBtn, legRing);
   }).join('') || `<p class="col-span-full text-center text-slate-600 text-xs py-4">Aucune carte disponible dans cette catégorie.</p>`;
 
@@ -831,6 +883,19 @@ function navZoom(dir) {
   updateLightbox();
 }
 
+function builderActionsHTML(c, k) {
+  const d = cur(), cat = catOf(c), info = CAT[cat], cnt = deckCounts(d);
+  const isCmd = d.commander === c.id, inD = inDeck(c.id), full = cnt[cat] >= info.max;
+  let btn;
+  if (isCmd) btn = `<button data-remove-cmd="1" class="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-sm font-bold active:scale-95">👑 Commandant · le retirer</button>`;
+  else if (inD) btn = `<button data-remove="${esc(c.id)}" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm font-bold active:scale-95">➖ Retirer du deck</button>`;
+  else if (k > 0 && !full) btn = `<button data-add="${esc(c.id)}" class="acc-bg px-4 py-2 rounded-lg text-sm font-bold active:scale-95">➕ Ajouter au deck</button>`;
+  else if (k > 0) btn = `<span class="text-xs text-rose-300 font-semibold">${info.emoji} ${info.label} complètes (${info.max}/${info.max})</span>`;
+  else btn = `<span class="text-xs text-slate-500">Carte non possédée</span>`;
+  return `<div class="flex flex-col items-center gap-1.5 mt-2">${btn}
+    <div class="text-[11px] text-slate-400">${info.emoji} ${info.label} dans le deck : ${cnt[cat]}/${info.max} · Possédée ×${k}</div></div>`;
+}
+
 function updateLightbox() {
   const c = zoomN && cardOf(zoomN);
   if (!c) return closeZoom();
@@ -852,11 +917,11 @@ function updateLightbox() {
       <span class="inline-flex items-center gap-1.5 text-slate-300"><span class="flex gap-0.5">${dotsHTML(c.tags)}</span>${esc(manaLabels)}</span>
       ${c.legendary ? `<span class="text-amber-400 font-semibold">👑 Éligible Commandant</span>` : ''}
     </div>
-    <div class="flex items-center justify-center gap-4 mt-2">
+    ${view === 'builder' ? builderActionsHTML(c, k) : `<div class="flex items-center justify-center gap-4 mt-2">
       <button data-dec="${esc(c.id)}" class="w-11 h-11 rounded-lg bg-slate-700 text-2xl leading-none active:bg-slate-600">−</button>
       <span class="font-bold text-xl w-8 text-center ${k > 1 ? 'text-amber-400' : k === 1 ? 'text-emerald-400' : 'text-slate-500'}">${k}</span>
       <button data-inc="${esc(c.id)}" class="acc-bg w-11 h-11 rounded-lg text-2xl leading-none">+</button>
-    </div>`;
+    </div>`}`;
 }
 
 document.addEventListener('keydown', e => {
@@ -990,6 +1055,7 @@ document.addEventListener('click', e => {
 
   if (d.f) { filter = d.f; return render(); }
   if (d.bf) { benchSet = d.bf; return render(); }
+  if (d.cat) { benchCat = (benchCat === d.cat) ? 'all' : d.cat; return render(); }
   if (d.inc) return setOwned(d.inc, +1);
   if (d.dec) return setOwned(d.dec, -1);
 
@@ -998,6 +1064,10 @@ document.addEventListener('click', e => {
     if (!deck.commander && cardToAdd?.legendary) {
       setAsCommander(d.add);
       return;
+    }
+    const cat = cardToAdd ? catOf(cardToAdd) : null;
+    if (cat && deckCounts(deck)[cat] >= CAT[cat].max) {
+      return showToast(`${CAT[cat].emoji} ${CAT[cat].label} complètes (${CAT[cat].max}/${CAT[cat].max}) : retire-en une avant d'en ajouter.`, true);
     }
     if (totalDeck() >= DECK_SIZE) {
       return showToast(`Deck complet (${DECK_SIZE}/${DECK_SIZE}).`, true);
