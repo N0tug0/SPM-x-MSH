@@ -19,8 +19,8 @@
     50% { border-color: rgba(245, 158, 11, 0.9); }
   }
   .commander-slot-empty { animation: pulseBorder 2.5s infinite ease-in-out; }
-  .mana-chip { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; transition:transform .1s; }
-  .mana-chip:active { transform:scale(.94); }
+  .chip-btn { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; transition:transform .1s; }
+  .chip-btn:active { transform:scale(.94); }
   .mana-dot { width:14px; height:14px; border-radius:9999px; border:1.5px solid rgba(0,0,0,.55); flex-shrink:0; box-shadow:inset 0 0 0 1px rgba(255,255,255,.25); }
 </style>
 </head>
@@ -44,11 +44,15 @@
 
   <div id="status" class="text-center text-slate-400 py-10"></div>
 
-  <!-- VUE COLLECTION (une licence) -->
+  <!-- VUE COLLECTION -->
   <section id="view-collection" class="hidden">
-    <!-- Onglets de MANA (sélection multiple) -->
-    <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Trier par mana · sélection multiple</div>
+    <!-- Onglets Mana -->
+    <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Filtrer par Mana · multi-sélection</div>
     <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-1" id="manaTabs"></div>
+
+    <!-- Onglets Catégories / Types -->
+    <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Filtrer par Catégorie / Sous-type · multi-sélection</div>
+    <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-2" id="typeTabs"></div>
 
     <div class="flex gap-2 overflow-x-auto no-scrollbar mb-2" id="filters"></div>
     <input id="search" type="search" placeholder="Rechercher une carte…"
@@ -56,9 +60,8 @@
     <div id="grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2"></div>
   </section>
 
-  <!-- VUE BUILDER (mix des licences) -->
+  <!-- VUE BUILDER -->
   <section id="view-builder" class="hidden">
-
     <div class="mb-4 p-2 rounded-lg bg-slate-900 border border-slate-800">
       <div class="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Mes decks · toutes licences mélangées</div>
       <div class="flex gap-2">
@@ -111,7 +114,8 @@
     </div>
     <div class="flex gap-2 overflow-x-auto no-scrollbar mb-2" id="benchFilters"></div>
     <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-1" id="benchMana"></div>
-    <input id="benchSearch" type="search" placeholder="Rechercher dans le bench (nom, #, légendaire…)…"
+    <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-1" id="benchTypes"></div>
+    <input id="benchSearch" type="search" placeholder="Rechercher dans le bench (nom, #, type, légendaire…)…"
       class="w-full mb-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-sm focus:outline-none focus:border-slate-400">
     <div id="bench" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-1.5 p-2 rounded-lg bg-slate-900/50 min-h-[72px]"></div>
   </section>
@@ -124,7 +128,7 @@
   </div>
 </main>
 
-<!-- MODAL DE SÉLECTION DU COMMANDANT -->
+<!-- MODAL SÉLECTION COMMANDANT -->
 <div id="cmdModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3">
   <div class="bg-slate-900 border border-amber-500/40 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
     <div class="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
@@ -157,10 +161,6 @@
 
 <script>
 /* ================= CONFIG ================= */
-/* "sources" : sets Scryfall fusionnés dans la même collection.
-   - Le premier est le set principal (numéros de carte inchangés → ta collection existante est conservée).
-   - Les suivants sont préfixés (ex. MAR-12, SPE-3) pour éviter les collisions de numéros.
-   - keepAll : true = on garde aussi les versions showcase / borderless / full art, etc. */
 const SETS = [
   { code: "spm", label: "Spider-Man",          short: "Spider-Man", emoji: "🕷️", color: "#dc2626",
     sources: [ { code: "spm", keepAll: true }, { code: "mar", keepAll: true }, { code: "spe", force: [21, 26] } ] },
@@ -169,7 +169,6 @@ const SETS = [
 ];
 const BUILDER_COLOR = "#d97706";
 
-// Types de mana sélectionnables (plusieurs possibles en même temps)
 const MANA = [
   { k: 'W', label: 'Blanc',    bg: '#f5f0cf' },
   { k: 'U', label: 'Bleu',     bg: '#2f7fd1' },
@@ -182,11 +181,27 @@ const MANA = [
 const COLOR_ORDER = ['W', 'U', 'B', 'R', 'G'];
 const manaInfo = k => MANA.find(m => m.k === k);
 const srcsOf = cfg => cfg.sources || [{ code: cfg.code }];
+
+/* Catégories / Sous-types populaires à classer */
+const CATEGORIES = [
+  { k: 'spider',   label: 'Araignée',  icon: '🕷️', re: /\b(spider|araign[eé]e)\b/i },
+  { k: 'hero',     label: 'Héros',      icon: '🛡️', re: /\b(hero|h[eé]ros)\b/i },
+  { k: 'villain',  label: 'Vilain',     icon: '🦹', re: /\b(villain|vilain)\b/i },
+  { k: 'human',    label: 'Humain',     icon: '👤', re: /\b(human|humain)\b/i },
+  { k: 'mutant',   label: 'Mutant',     icon: '🧬', re: /\b(mutant)\b/i },
+  { k: 'creature', label: 'Créature',   icon: '🐉', re: /\b(creature|cr[eé]ature)\b/i },
+  { k: 'planesw',  label: 'Arpenteur',  icon: '⚡', re: /\b(planeswalker|arpenteur)\b/i },
+  { k: 'instant',  label: 'Éphémère',   icon: '✨', re: /\b(instant|[eé]ph[eé]m[eé]re)\b/i },
+  { k: 'sorcery',  label: 'Rituel',     icon: '📜', re: /\b(sorcery|rituel)\b/i },
+  { k: 'artifact', label: 'Artefact',   icon: '⚙️', re: /\b(artifact|artefact)\b/i },
+  { k: 'enchant',  label: 'Enchantement',icon:'🔮', re: /\b(enchantment|enchantement)\b/i },
+  { k: 'equip',    label: 'Équipement', icon: '🗡️', re: /\b(equipment|[eé]quipement)\b/i }
+];
 /* ========================================== */
 
 const DECK_SIZE = 100;
 const K = {
-  cards:    c => `mtg_${c}_cards_v6`,          // v6 : variantes (full art…) + faces des cartes retournables
+  cards:    c => `mtg_${c}_cards_v7`,
   owned:    c => `mtg_${c}_owned_v1`,
   oldDeck1: c => `mtg_${c}_deck_v1`,
   oldDecks: c => `mtg_${c}_decks_v1`,
@@ -278,12 +293,17 @@ const validViews = [...SETS.map(s => s.code), 'builder'];
 let view = load(K.last, SETS[0].code);
 if (!validViews.includes(view)) view = SETS[0].code;
 let S = state[view] || state[SETS[0].code];
+
 let filter = 'all', query = '';
-let manaSel = new Set(), manaMode = 'all';              // filtre mana de la collection
+let manaSel = new Set(), manaMode = 'all';
+let typeSel = new Set(), typeMode = 'all';          // Filtre Catégories / Types (Collection)
+
 let benchSet = 'all', benchQuery = '', cmdSearchQuery = '';
-let benchManaSel = new Set(), benchManaMode = 'all';    // filtre mana du bench
+let benchManaSel = new Set(), benchManaMode = 'all';
+let benchTypeSel = new Set(), benchTypeMode = 'all';  // Filtre Catégories / Types (Bench)
+
 let zoomN = null, zoomList = [], builderIds = [], collectionIds = [];
-const flipped = new Set();                                  // cartes actuellement retournées (face B)
+const flipped = new Set();
 const faceOf = c => (c.faces && flipped.has(c.id)) ? c.faces[1] : c;
 function toggleFlip(id) {
   if (flipped.has(id)) flipped.delete(id); else flipped.add(id);
@@ -292,7 +312,6 @@ function toggleFlip(id) {
 
 const cur = () => decks.list.find(d => d.id === decks.active) || decks.list[0];
 const touch = () => { cur().updated = Date.now(); };
-
 const cardOf  = id => state[codeOf(id)]?.map.get(numOf(id));
 const countOf = id => state[codeOf(id)]?.owned[numOf(id)] || 0;
 const allCards = () => SETS.flatMap(s => state[s.code].cards);
@@ -303,15 +322,20 @@ const totalOf = d => d.deck.length + (d.commander ? 1 : 0);
 const totalDeck = () => totalOf(cur());
 const matchNum = (c, q) => c.n.toLowerCase() === q;
 
-/* ---------- Filtre mana multi-sélection ----------
-   "all" (ET) : la carte doit contenir TOUS les types choisis (ex. 5 couleurs → seulement les cartes 5 couleurs)
-   "any" (OU) : la carte doit contenir AU MOINS UN des types choisis */
 function matchMana(c, sel, mode) {
   if (!sel.size) return true;
   const tags = c.tags || ['C'];
   const picked = [...sel];
   return mode === 'all' ? picked.every(k => tags.includes(k)) : picked.some(k => tags.includes(k));
 }
+
+function matchTypes(c, sel, mode) {
+  if (!sel.size) return true;
+  const ctypes = c.categories || [];
+  const picked = [...sel];
+  return mode === 'all' ? picked.every(k => ctypes.includes(k)) : picked.some(k => ctypes.includes(k));
+}
+
 function toggleSel(sel, k) {
   if (k === 'all') sel.clear();
   else if (sel.has(k)) sel.delete(k);
@@ -391,7 +415,6 @@ const isV1 = c =>
   !c.full_art && !c.variation &&
   !/^\d+★$|[a-z]$/i.test(c.collector_number);
 
-// Liste des "tags" de mana d'une carte : couleurs WUBRG (plusieurs possibles), ou C (incolore), ou L (terrain)
 function tagsOf(c) {
   const faces = c.card_faces || [];
   const typeLine = c.type_line || faces[0]?.type_line || '';
@@ -401,7 +424,10 @@ function tagsOf(c) {
   return cols.length ? cols : ['C'];
 }
 
-// Type de variante d'une impression ('' = version normale)
+function categoriesOf(fullTypeStr) {
+  return CATEGORIES.filter(cat => cat.re.test(fullTypeStr)).map(cat => cat.k);
+}
+
 function variantOf(c) {
   const fx = c.frame_effects || [];
   if (c.full_art) return 'Full art';
@@ -413,7 +439,6 @@ function variantOf(c) {
   return '';
 }
 
-// prefix : '' pour le set principal, "MAR-" / "SPE-" pour les sets fusionnés (évite les collisions de numéros)
 function normalize(c, prefix = '', so = 0) {
   const iu = c.image_uris || c.card_faces?.[0]?.image_uris || {};
   const faceTypes = (c.card_faces || []).map(f => `${f.type_line || ''} ${f.printed_type_line || ''}`).join(' ');
@@ -422,7 +447,6 @@ function normalize(c, prefix = '', so = 0) {
   const isCreature = /creature|créature/i.test(fullTypeStr);
   const isBasic = /basic|base/i.test(fullTypeStr) && /land|terrain/i.test(fullTypeStr);
   const num = parseInt(c.collector_number, 10);
-  // Cartes retournables (transform / modal DFC) : une image par face
   const f0 = c.card_faces?.[0]?.image_uris, f1 = c.card_faces?.[1]?.image_uris;
   const faces = (f0 && f1)
     ? [ { img: f0.normal || '', big: f0.large || f0.normal || '' }, { img: f1.normal || '', big: f1.large || f1.normal || '' } ]
@@ -441,6 +465,7 @@ function normalize(c, prefix = '', so = 0) {
     isCommanderEligible: isLegendary && (isCreature || /planeswalker/i.test(fullTypeStr)),
     basic: isBasic,
     tags: tagsOf(c),
+    categories: categoriesOf(fullTypeStr),
     faces,
     variant: variantOf(c),
     lang: c.lang
@@ -451,6 +476,7 @@ function setCards(st, list) {
   list.forEach(c => {
     c.code = st.cfg.code; c.id = `${c.code}:${c.n}`;
     if (!Array.isArray(c.tags) || !c.tags.length) c.tags = ['C'];
+    if (!Array.isArray(c.categories)) c.categories = categoriesOf(c.type || '');
   });
   list.sort((a, b) => ((a.so || 0) - (b.so || 0)) || cmpNum(a, b));
   st.cards = list;
@@ -473,7 +499,6 @@ async function loadSet(code) {
           fetchAll(`set:${src.code} lang:en`),
           fetchAll(`set:${src.code} lang:fr`)
         ]);
-        // Les couleurs sont prises sur la version EN (toujours complète), nom/image sur la FR si dispo
         const enTags = new Map(en.map(c => [c.collector_number, tagsOf(c)]));
         [...en, ...fr].filter(c => {
           if (src.keepAll || isV1(c)) return true;
@@ -486,7 +511,6 @@ async function loadSet(code) {
           map.set(n.n, n);
         });
       } catch (err) {
-        // un set secondaire qui échoue ne doit pas bloquer le set principal
         if (i === 0) throw err;
       }
     }
@@ -512,7 +536,11 @@ function switchView(v) {
   closeZoom();
   closeCmdModal();
   view = v;
-  if (state[v]) { S = state[v]; query = ''; $('#search').value = ''; filter = 'all'; manaSel = new Set(); manaMode = 'all'; }
+  if (state[v]) { 
+    S = state[v]; query = ''; $('#search').value = ''; filter = 'all'; 
+    manaSel.clear(); manaMode = 'all'; 
+    typeSel.clear(); typeMode = 'all';
+  }
   persist(true);
   render();
   ensureLoaded();
@@ -548,35 +576,20 @@ function deckAction(act) {
 }
 
 function setAsCommander(id) {
-  const d = cur();
-  const c = cardOf(id);
+  const d = cur(), c = cardOf(id);
   if (!c) return;
-
-  if (d.commander === id) {
-    showToast(`Cette carte est déjà votre commandant.`);
-    return;
-  }
-
+  if (d.commander === id) { showToast(`Cette carte est déjà votre commandant.`); return; }
   d.deck = d.deck.filter(x => x !== id);
   const prevCmd = d.commander ? cardOf(d.commander) : null;
   d.commander = id;
-  touch();
-  persist();
-  closeCmdModal();
-  render();
-
-  showToast(prevCmd
-    ? `👑 ${c.name} désigné(e) comme Commandant (remplace ${prevCmd.name})`
-    : `👑 ${c.name} désigné(e) comme Commandant`);
+  touch(); persist(); closeCmdModal(); render();
+  showToast(prevCmd ? `👑 ${c.name} désigné(e) comme Commandant (remplace ${prevCmd.name})` : `👑 ${c.name} désigné(e) comme Commandant`);
 }
 
 function removeCommander() {
-  const d = cur();
-  if (!d.commander) return;
+  const d = cur(); if (!d.commander) return;
   d.commander = null;
-  touch();
-  persist();
-  render();
+  touch(); persist(); render();
   showToast(`Commandant retiré`);
 }
 
@@ -587,14 +600,11 @@ function openCmdModal() {
   renderCmdModalList();
 }
 
-function closeCmdModal() {
-  $('#cmdModal').classList.add('hidden');
-}
+function closeCmdModal() { $('#cmdModal').classList.add('hidden'); }
 
 function renderCmdModalList() {
   const d = cur();
   const q = cmdSearchQuery.trim().toLowerCase();
-
   const legCards = allCards().filter(c => {
     if (!c.legendary) return false;
     if (countOf(c.id) <= 0) return false;
@@ -621,8 +631,7 @@ function renderCmdModalList() {
   `).join('');
 }
 
-/* ---------- Onglets de mana multi-sélection (collection + bench) ----------
-   cards : liste de base pour les compteurs ; attr/modeAttr : data-attributs ; sel : Set sélectionné */
+/* Génération des onglets de Mana */
 function manaTabsHTML(cards, attr, modeAttr, sel, mode, ownedMode) {
   const tot = {}, own = {};
   cards.forEach(c => (c.tags || ['C']).forEach(k => {
@@ -635,7 +644,7 @@ function manaTabsHTML(cards, attr, modeAttr, sel, mode, ownedMode) {
     const on = k === 'all' ? sel.size === 0 : sel.has(k);
     const empty = k !== 'all' && !count && !on;
     const num = ownedMode ? `${ownedCount || 0}/${count || 0}` : `${count || 0}`;
-    return `<button ${attr}="${k}" class="mana-chip px-3 py-1.5 rounded-full text-xs font-semibold border ${
+    return `<button ${attr}="${k}" class="chip-btn px-3 py-1.5 rounded-full text-xs font-semibold border ${
       on ? 'bg-slate-100 text-slate-900 border-white shadow' : 'bg-slate-800 text-slate-300 border-slate-700'} ${empty ? 'opacity-40' : ''}">
       ${bg ? `<span class="mana-dot" style="background:${bg}"></span>` : ''}
       <span>${esc(label)}</span>
@@ -643,13 +652,42 @@ function manaTabsHTML(cards, attr, modeAttr, sel, mode, ownedMode) {
     </button>`;
   };
 
-  let html = chip('all', 'Tous', null, cards.length, ownedCards) +
+  let html = chip('all', 'Tous Manas', null, cards.length, ownedCards) +
     MANA.map(m => chip(m.k, m.label, m.bg, tot[m.k], own[m.k])).join('');
 
-  // Mode ET / OU : visible dès qu'on sélectionne 2 types ou plus
   if (sel.size > 1) {
-    html += `<button ${modeAttr}="1" title="Changer le mode de combinaison" class="mana-chip px-3 py-1.5 rounded-full text-xs font-bold border border-amber-500/70 bg-amber-500/15 text-amber-300">
+    html += `<button ${modeAttr}="1" title="Changer le mode de combinaison mana" class="chip-btn px-3 py-1.5 rounded-full text-xs font-bold border border-amber-500/70 bg-amber-500/15 text-amber-300">
       ⚖️ ${mode === 'all' ? 'ET · contient tout' : 'OU · au moins un'}
+    </button>`;
+  }
+  return html;
+}
+
+/* Génération des onglets de Catégories / Types */
+function typeTabsHTML(cards, attr, modeAttr, sel, mode) {
+  const counts = {};
+  cards.forEach(c => (c.categories || []).forEach(k => {
+    counts[k] = (counts[k] || 0) + 1;
+  }));
+
+  const chip = (k, label, icon, count) => {
+    const on = k === 'all' ? sel.size === 0 : sel.has(k);
+    const empty = k !== 'all' && !count && !on;
+    return `<button ${attr}="${k}" class="chip-btn px-3 py-1.5 rounded-full text-xs font-semibold border ${
+      on ? 'bg-amber-400 text-slate-950 border-amber-300 shadow font-bold' : 'bg-slate-800 text-slate-300 border-slate-700'} ${empty ? 'opacity-40' : ''}">
+      ${icon ? `<span>${icon}</span>` : ''}
+      <span>${esc(label)}</span>
+      <span class="${on ? 'text-slate-900/70 font-bold' : 'text-slate-500'} font-normal">${count}</span>
+    </button>`;
+  };
+
+  let html = chip('all', 'Toutes Catégories', '🏷️', cards.length) +
+    CATEGORIES.filter(cat => (counts[cat.k] || 0) > 0 || sel.has(cat.k))
+      .map(cat => chip(cat.k, cat.label, cat.icon, counts[cat.k] || 0)).join('');
+
+  if (sel.size > 1) {
+    html += `<button ${modeAttr}="1" title="Changer le mode de combinaison de types" class="chip-btn px-3 py-1.5 rounded-full text-xs font-bold border border-sky-500/70 bg-sky-500/15 text-sky-300">
+      ⚖️ ${mode === 'all' ? 'ET · possède tous les types' : 'OU · possède au moins un type'}
     </button>`;
   }
   return html;
@@ -670,16 +708,18 @@ function renderFilters() {
 
 function renderCollection() {
   $('#manaTabs').innerHTML = manaTabsHTML(S.cards, 'data-mana', 'data-mmode', manaSel, manaMode, true);
+  $('#typeTabs').innerHTML = typeTabsHTML(S.cards, 'data-type', 'data-tmode', typeSel, typeMode);
 
   const q = query.trim().toLowerCase();
   const list = S.cards.filter(c => {
     const k = countOf(c.id);
     if (!matchMana(c, manaSel, manaMode)) return false;
+    if (!matchTypes(c, typeSel, typeMode)) return false;
     if (filter === 'owned' && k < 1) return false;
     if (filter === 'missing' && k > 0) return false;
     if (filter === 'dupes' && k < 2) return false;
     if (filter === 'var' && !c.variant) return false;
-    if (q && !(c.name.toLowerCase().includes(q) || matchNum(c, q))) return false;
+    if (q && !(c.name.toLowerCase().includes(q) || matchNum(c, q) || (c.type && c.type.toLowerCase().includes(q)))) return false;
     return true;
   });
   collectionIds = list.map(c => c.id);
@@ -784,7 +824,6 @@ function renderBuilder() {
     return mini(c, `data-remove="${esc(c.id)}" title="Cliquer pour retirer du deck"`, cmdPromoteBtn);
   }).join('') || `<p class="col-span-full text-center text-slate-500 text-xs py-4">Deck vide – clique sur des cartes du Bench pour constituer votre deck.</p>`;
 
-  // Bench : base (sans filtre mana) pour compter les onglets, puis filtre mana multi-sélection
   const q = benchQuery.trim().toLowerCase();
   const benchBase = allCards().filter(c => {
     if (countOf(c.id) <= 0) return false;
@@ -795,8 +834,11 @@ function renderBuilder() {
     if (q && !(c.name.toLowerCase().includes(q) || matchNum(c, q) || (c.type && c.type.toLowerCase().includes(q)))) return false;
     return true;
   });
+
   $('#benchMana').innerHTML = manaTabsHTML(benchBase, 'data-bmana', 'data-bmmode', benchManaSel, benchManaMode, false);
-  const bench = benchBase.filter(c => matchMana(c, benchManaSel, benchManaMode));
+  $('#benchTypes').innerHTML = typeTabsHTML(benchBase, 'data-btype', 'data-btmode', benchTypeSel, benchTypeMode);
+
+  const bench = benchBase.filter(c => matchMana(c, benchManaSel, benchManaMode) && matchTypes(c, benchTypeSel, benchTypeMode));
 
   $('#bench').innerHTML = bench.map(c => {
     const cmdBtn = c.legendary
@@ -841,9 +883,12 @@ function updateLightbox() {
   img.alt = c.name;
   const k = countOf(c.id);
   const manaLabels = (c.tags || []).map(t => manaInfo(t)?.label).filter(Boolean).join(' / ');
+  const catLabels = (c.categories || []).map(catKey => CATEGORIES.find(x => x.k === catKey)?.label).filter(Boolean).join(', ');
+
   $('#lbInfo').innerHTML = `
     <div class="font-semibold">${esc(c.name)} <span class="text-slate-400 text-sm">${cfgOf(c.code)?.emoji || ''} #${esc(c.n)}</span></div>
     <div class="text-xs text-slate-300 mt-0.5">${esc(c.type || '')}</div>
+    ${catLabels ? `<div class="text-[11px] text-amber-300/90 mt-0.5">🏷️ ${esc(catLabels)}</div>` : ''}
     ${(c.variant || c.faces) ? `<div class="flex items-center justify-center gap-2 mt-1">
       ${c.variant ? `<span class="text-[10px] bg-fuchsia-600/90 px-1.5 py-0.5 rounded font-semibold">✨ ${esc(c.variant)}</span>` : ''}
       ${c.faces ? `<button data-flip="${esc(c.id)}" class="text-xs px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 font-semibold active:scale-95">🔄 Retourner la carte</button>` : ''}
@@ -921,7 +966,6 @@ function render() {
 document.addEventListener('click', e => {
   if (e.target.id === 'lightbox') return closeZoom();
   if (e.target.id === 'lbImg') {
-    // sur une carte retournable, un clic sur l'image la retourne (fermer = ✕ ou clic dans le fond noir)
     const lc = zoomN && cardOf(zoomN);
     return lc?.faces ? toggleFlip(lc.id) : closeZoom();
   }
@@ -931,41 +975,21 @@ document.addEventListener('click', e => {
 
   if (e.target.closest('[data-close-cmdmodal]')) return closeCmdModal();
   const selectCmdBtn = e.target.closest('[data-select-cmd]');
-  if (selectCmdBtn) {
-    setAsCommander(selectCmdBtn.dataset.selectCmd);
-    return;
-  }
+  if (selectCmdBtn) { setAsCommander(selectCmdBtn.dataset.selectCmd); return; }
 
-  if (e.target.closest('[data-open-cmd]')) {
-    openCmdModal();
-    return;
-  }
+  if (e.target.closest('[data-open-cmd]')) { openCmdModal(); return; }
 
   const promoBtn = e.target.closest('[data-promote-cmd]');
-  if (promoBtn) {
-    e.stopPropagation();
-    setAsCommander(promoBtn.dataset.promoteCmd);
-    return;
-  }
+  if (promoBtn) { e.stopPropagation(); setAsCommander(promoBtn.dataset.promoteCmd); return; }
 
   const cmdBtn = e.target.closest('[data-cmd]');
-  if (cmdBtn) {
-    e.stopPropagation();
-    setAsCommander(cmdBtn.dataset.cmd);
-    return;
-  }
+  if (cmdBtn) { e.stopPropagation(); setAsCommander(cmdBtn.dataset.cmd); return; }
 
   const removeCmdTarget = e.target.closest('[data-remove-cmd]');
-  if (removeCmdTarget) {
-    removeCommander();
-    return;
-  }
+  if (removeCmdTarget) { removeCommander(); return; }
 
   const zoomTarget = e.target.closest('[data-zoom]');
-  if (zoomTarget) {
-    e.stopPropagation();
-    return openZoom(zoomTarget.dataset.zoom);
-  }
+  if (zoomTarget) { e.stopPropagation(); return openZoom(zoomTarget.dataset.zoom); }
 
   const t = e.target.closest('button, [data-add], [data-remove]');
   if (!t) return;
@@ -982,11 +1006,17 @@ document.addEventListener('click', e => {
   if (d.close !== undefined) return closeZoom();
   if (d.nav) return navZoom(parseInt(d.nav, 10));
 
-  // Mana : clic = ajoute / retire un type de la sélection ("Tous" = vider la sélection)
+  // Filtres Mana
   if (d.mana) { toggleSel(manaSel, d.mana); return render(); }
   if (d.mmode) { manaMode = manaMode === 'all' ? 'any' : 'all'; return render(); }
   if (d.bmana) { toggleSel(benchManaSel, d.bmana); return render(); }
   if (d.bmmode) { benchManaMode = benchManaMode === 'all' ? 'any' : 'all'; return render(); }
+
+  // Filtres Types / Catégories
+  if (d.type) { toggleSel(typeSel, d.type); return render(); }
+  if (d.tmode) { typeMode = typeMode === 'all' ? 'any' : 'all'; return render(); }
+  if (d.btype) { toggleSel(benchTypeSel, d.btype); return render(); }
+  if (d.btmode) { benchTypeMode = benchTypeMode === 'all' ? 'any' : 'all'; return render(); }
 
   if (d.f) { filter = d.f; return render(); }
   if (d.bf) { benchSet = d.bf; return render(); }
