@@ -56,6 +56,7 @@
 
     <div class="flex gap-2 overflow-x-auto no-scrollbar mb-2" id="filters"></div>
     <input id="search" type="search" placeholder="Rechercher une carte…"
+      autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
       class="w-full mb-3 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-sm focus:outline-none focus:border-slate-400">
     <div id="grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2"></div>
   </section>
@@ -116,6 +117,7 @@
     <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-1" id="benchMana"></div>
     <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-1" id="benchTypes"></div>
     <input id="benchSearch" type="search" placeholder="Rechercher dans le bench (nom, #, type, légendaire…)…"
+      autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
       class="w-full mb-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-sm focus:outline-none focus:border-slate-400">
     <div id="bench" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-1.5 p-2 rounded-lg bg-slate-900/50 min-h-[72px]"></div>
   </section>
@@ -139,6 +141,7 @@
     </div>
     <div class="p-2 border-b border-slate-800 bg-slate-900">
       <input id="cmdSearch" type="search" placeholder="Filtrer les créatures légendaires..."
+        autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false"
         class="w-full px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-700 text-sm focus:outline-none focus:border-amber-400">
     </div>
     <div id="cmdList" class="p-3 overflow-y-auto grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2.5"></div>
@@ -182,20 +185,19 @@ const COLOR_ORDER = ['W', 'U', 'B', 'R', 'G'];
 const manaInfo = k => MANA.find(m => m.k === k);
 const srcsOf = cfg => cfg.sources || [{ code: cfg.code }];
 
-/* Catégories / Sous-types populaires à classer */
 const CATEGORIES = [
-  { k: 'spider',   label: 'Araignée',  icon: '🕷️', re: /\b(spider|araign[eé]e)\b/i },
-  { k: 'hero',     label: 'Héros',      icon: '🛡️', re: /\b(hero|h[eé]ros)\b/i },
-  { k: 'villain',  label: 'Vilain',     icon: '🦹', re: /\b(villain|vilain)\b/i },
-  { k: 'human',    label: 'Humain',     icon: '👤', re: /\b(human|humain)\b/i },
-  { k: 'mutant',   label: 'Mutant',     icon: '🧬', re: /\b(mutant)\b/i },
-  { k: 'creature', label: 'Créature',   icon: '🐉', re: /\b(creature|cr[eé]ature)\b/i },
-  { k: 'planesw',  label: 'Arpenteur',  icon: '⚡', re: /\b(planeswalker|arpenteur)\b/i },
-  { k: 'instant',  label: 'Éphémère',   icon: '✨', re: /\b(instant|[eé]ph[eé]m[eé]re)\b/i },
-  { k: 'sorcery',  label: 'Rituel',     icon: '📜', re: /\b(sorcery|rituel)\b/i },
-  { k: 'artifact', label: 'Artefact',   icon: '⚙️', re: /\b(artifact|artefact)\b/i },
-  { k: 'enchant',  label: 'Enchantement',icon:'🔮', re: /\b(enchantment|enchantement)\b/i },
-  { k: 'equip',    label: 'Équipement', icon: '🗡️', re: /\b(equipment|[eé]quipement)\b/i }
+  { k: 'spider',   label: 'Araignée',     icon: '🕷️', re: /\b(spider|araign[eé]e)\b/i },
+  { k: 'hero',     label: 'Héros',        icon: '🛡️', re: /\b(hero|h[eé]ros)\b/i },
+  { k: 'villain',  label: 'Vilain',       icon: '🦹', re: /\b(villain|vilain)\b/i },
+  { k: 'human',    label: 'Humain',       icon: '👤', re: /\b(human|humain)\b/i },
+  { k: 'mutant',   label: 'Mutant',       icon: '🧬', re: /\b(mutant)\b/i },
+  { k: 'creature', label: 'Créature',     icon: '🐉', re: /\b(creature|cr[eé]ature)\b/i },
+  { k: 'planesw',  label: 'Arpenteur',    icon: '⚡', re: /\b(planeswalker|arpenteur)\b/i },
+  { k: 'instant',  label: 'Éphémère',     icon: '✨', re: /\b(instant|[eé]ph[eé]m[eé]re)\b/i },
+  { k: 'sorcery',  label: 'Rituel',       icon: '📜', re: /\b(sorcery|rituel)\b/i },
+  { k: 'artifact', label: 'Artefact',     icon: '⚙️', re: /\b(artifact|artefact)\b/i },
+  { k: 'enchant',  label: 'Enchantement', icon: '🔮', re: /\b(enchantment|enchantement)\b/i },
+  { k: 'equip',    label: 'Équipement',   icon: '🗡️', re: /\b(equipment|[eé]quipement)\b/i }
 ];
 /* ========================================== */
 
@@ -296,11 +298,11 @@ let S = state[view] || state[SETS[0].code];
 
 let filter = 'all', query = '';
 let manaSel = new Set(), manaMode = 'all';
-let typeSel = new Set(), typeMode = 'all';          // Filtre Catégories / Types (Collection)
+let typeSel = new Set(), typeMode = 'all';
 
 let benchSet = 'all', benchQuery = '', cmdSearchQuery = '';
 let benchManaSel = new Set(), benchManaMode = 'all';
-let benchTypeSel = new Set(), benchTypeMode = 'all';  // Filtre Catégories / Types (Bench)
+let benchTypeSel = new Set(), benchTypeMode = 'all';
 
 let zoomN = null, zoomList = [], builderIds = [], collectionIds = [];
 const flipped = new Set();
@@ -631,7 +633,6 @@ function renderCmdModalList() {
   `).join('');
 }
 
-/* Génération des onglets de Mana */
 function manaTabsHTML(cards, attr, modeAttr, sel, mode, ownedMode) {
   const tot = {}, own = {};
   cards.forEach(c => (c.tags || ['C']).forEach(k => {
@@ -663,7 +664,6 @@ function manaTabsHTML(cards, attr, modeAttr, sel, mode, ownedMode) {
   return html;
 }
 
-/* Génération des onglets de Catégories / Types */
 function typeTabsHTML(cards, attr, modeAttr, sel, mode) {
   const counts = {};
   cards.forEach(c => (c.categories || []).forEach(k => {
